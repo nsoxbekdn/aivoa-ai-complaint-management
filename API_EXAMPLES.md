@@ -124,10 +124,10 @@ Invoke-RestMethod -Uri http://localhost:8000/api/complaints/analyze -Method Post
 
 ## 3. Continue the conversational intake
 
-Send the latest reporter message together with the current factual fields and recent
-conversation. The response confirms changes, answers terminology questions, recalculates
-completeness, and asks at most one next question. It cannot set risk, severity, priority, root
-cause, or CAPA.
+Send the latest reporter message together with the current factual fields, recent conversation,
+and the last returned dialogue state. The response returns validated fields, an explicit action,
+validation feedback, recalculated completeness, and the next dialogue state. It cannot set risk,
+severity, priority, root cause, or CAPA.
 
 ```bash
 curl -X POST http://localhost:8000/api/complaints/intake/chat \
@@ -145,7 +145,15 @@ curl -X POST http://localhost:8000/api/complaints/intake/chat \
     },
     "history": [
       {"role": "assistant", "text": "What is the batch or lot number on the bottles?"}
-    ]
+    ],
+    "dialogue_state": {
+      "pending_field": "batch_lot_number",
+      "partial_fields": {},
+      "unavailable_fields": [],
+      "question_history": ["What is the batch or lot number on the bottles?"],
+      "retry_counts": {},
+      "last_action": "ask_missing_detail"
+    }
   }'
 ```
 
@@ -153,7 +161,7 @@ Example response:
 
 ```json
 {
-  "assistant_message": "Got it — I added batch CC26045. The expiry date is the date until which the manufacturer guarantees the product when stored as directed. What date was the complaint reported?",
+  "assistant_message": "The expiry date is the date until which the manufacturer guarantees the product when stored as directed. Got it—I recorded batch or lot number as CC26045. This is what I understand so far: The complaint concerns 5 bottles of ClearCough Syrup from batch CC26045. Next question: On what date was the problem first noticed or reported?",
   "updated_fields": {
     "complaint_source": "customer_email",
     "customer_name": "Apollo Pharmacy",
@@ -172,8 +180,22 @@ Example response:
     "follow_up_questions": ["What date was the complaint reported?"]
   },
   "changed_fields": ["batch_lot_number"],
+  "action": "accept_information",
+  "validation_feedback": [],
+  "dialogue_state": {
+    "pending_field": "complaint_date",
+    "partial_fields": {},
+    "unavailable_fields": [],
+    "question_history": [
+      "What is the batch or lot number on the bottles?",
+      "On what date was the problem first noticed or reported?"
+    ],
+    "retry_counts": {},
+    "last_action": "accept_information"
+  },
   "ready_to_lodge": false,
-  "warnings": []
+  "warnings": [],
+  "source_document": null
 }
 ```
 
@@ -184,6 +206,7 @@ curl -X POST http://localhost:8000/api/complaints/intake/chat/attachment \
   -F "message=This photo shows the printed product dates." \
   -F 'current_fields={"complaint_source":"customer_email","customer_name":"Apollo Pharmacy","product_name":"ClearCough Syrup","batch_lot_number":"CC26045","complaint_type":"packaging_defect","complaint_date":"2026-07-25","complaint_details":"Five bottles leaked around loose caps.","quantity_affected":5}' \
   -F 'history=[]' \
+  -F 'dialogue_state={"pending_field":"manufacturing_date","partial_fields":{},"unavailable_fields":[],"question_history":[],"retry_counts":{},"last_action":"ask_missing_detail"}' \
   -F "file=@samples/05_scanned_leaking_bottle.jpg"
 ```
 
@@ -372,7 +395,7 @@ Anything outside the record returns exactly:
 
 ---
 
-## 10. Prompt-injection check (worth demoing)
+## 10. Prompt-injection check
 
 ```bash
 curl -X POST http://localhost:8000/api/complaints/analyze \

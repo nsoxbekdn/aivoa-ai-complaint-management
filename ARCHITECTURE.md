@@ -21,9 +21,9 @@ internship project/
 │       │   ├── errors.py         one error envelope for the whole API
 │       │   └── routes/           health.py, complaints.py
 │       ├── models/complaint.py   the single SQLAlchemy table
-│       ├── schemas/              enums.py, analysis.py, complaint.py
-│       ├── services/             document_extract, completeness, risk_rules,
-│       │                         complaint_service (persistence), duplicates
+│       ├── schemas/              enums.py, analysis.py, complaint.py, intake.py
+│       ├── services/             document_extract, intake_dialogue, completeness,
+│       │                         risk_rules, complaint_service, duplicates
 │       ├── llm/                  groq_client.py, prompts.py, json_utils.py
 │       └── graph/                state.py, workflow.py, nodes/*.py
 └── frontend/
@@ -53,22 +53,26 @@ Conversational intake, step by step:
    relevant missing-information question.
 4. Each later reply dispatches `continueIntakeChat`. Text turns use
    `/api/complaints/intake/chat`; turns with another attachment use the multipart
-   `/api/complaints/intake/chat/attachment`. Both interpret
-   only that turn as factual updates, fields to clear, or a definition question. It grounds the
-   proposed update against the message, merges it with the current form, recalculates
-   completeness, and returns one next question.
-5. The reducer applies the returned fields and appends the user and assistant messages to
-   `intakeChat.messages`. A natural-language correction therefore updates the same form the
-   reporter can edit directly.
-6. Risk, root-cause, investigation, duplicate, and CAPA output remain out of the intake UI.
+   `/api/complaints/intake/chat/attachment`. Both send current factual fields, the recent
+   transcript, and `IntakeDialogueState`.
+5. Groq interprets the latest message in context and returns structured intent, complete field
+   updates, raw field candidates, clears, a clarification answer, and confirmation. Grounding
+   and deterministic validators decide which candidates may enter the record.
+6. `services/intake_dialogue.py` preserves useful partial values, recognises unavailable answers,
+   selects one pending field, tracks retries, and chooses an explicit action such as accepted,
+   corrected, partial, invalid, ambiguous, answer-question, unavailable, or ready.
+7. The reducer applies returned fields, stores the returned dialogue state, and appends the user
+   and assistant messages to `intakeChat.messages`. A short answer such as `2025` can therefore
+   complete an earlier `25 June`, while a natural correction updates the same editable form.
+8. Risk, root-cause, investigation, duplicate, and CAPA output remain out of the intake UI.
    When minimum factual completeness is reached, the **Lodge complaint** action becomes
    available.
-7. `buildCreatePayload` converts blanks to `null` and sends the final form, transcript, original
+9. `buildCreatePayload` converts blanks to `null` and sends the final form, transcript, original
    input, attachment transcriptions, and warnings to `/api/complaints/finalize`. A second,
    extraction-free LangGraph path regenerates completeness, risk, summary, investigation,
    CAPA, and duplicates from those authoritative form values. Only then is one consistent row
    committed. The saved detail page is the internal QA workspace.
-8. Rejected thunks store a human sentence produced by `toErrorMessage`; `ErrorAlert` renders it
+10. Rejected thunks store a human sentence produced by `toErrorMessage`; `ErrorAlert` renders it
    in the relevant surface.
 
 ```
@@ -88,7 +92,7 @@ One slice, `complaints`, holds:
 | The form | `formData`, `fieldSources`, `validationErrors` |
 | The input | `pastedText`, `upload` (name + size only) |
 | The AI result | `analysis`, `analyzing`, `analysisStartedAt`, `analysisError` |
-| Intake conversation | `intakeChat.{messages,pending,error,readyToLodge}` |
+| Intake conversation | `intakeChat.{messages,pending,error,readyToLodge,dialogueState}` |
 | Saving | `saving`, `saveError`, `savedComplaint` |
 | List screen | `list.{items,total,limit,offset,search,loading,error}` |
 | Detail screen | `current.{complaint,loading,error,updating}` |
@@ -126,10 +130,28 @@ Routes stay thin. `POST /api/complaints/analyze`:
 6. returns `ComplaintAnalysisResponse`. **Nothing is written to the database.**
 
 `POST /api/complaints/intake/chat` is the lighter conversational route. It receives the current
-factual fields, recent transcript, and latest message; Groq returns a strict
-`IntakeChatInterpretation`; the route grounds and merges updates, runs deterministic
-completeness, and composes a friendly confirmation plus one next question. It does not expose
-or change severity, priority, risk, or CAPA.
+factual fields, recent transcript, latest message, and client-carried dialogue state. Groq
+returns a strict `IntakeChatInterpretation` with intent, complete field updates, and raw field
+candidates. The route grounds proposed facts, applies deterministic value validation, and passes
+the result through `services/intake_dialogue.py`. The response includes an explicit action,
+validation feedback, updated fields, completeness, and the next dialogue state. It does not
+expose or change severity, priority, risk, or CAPA.
+
+The dialogue state is deliberately small and serialisable:
+
+| Field | Purpose |
+| --- | --- |
+| `pending_field` | Gives terse replies such as `2025` a precise context |
+| `partial_fields` | Retains valid but incomplete information such as `25 June` |
+| `unavailable_fields` | Prevents optional information marked unavailable from being re-asked |
+| `question_history` | Records recent server-selected questions |
+| `retry_counts` | Changes guidance after repeated unclear answers |
+| `last_action` | Records the most recent dialogue-policy outcome |
+
+This is not another LangGraph workflow. The initial analysis and authoritative finalization are
+graphs; later human conversation uses a smaller deterministic policy around structured Groq
+interpretation. That keeps conversational state explicit without confusing a rejected value
+with a graph-routing loop.
 
 `POST /api/complaints/finalize` receives the reporter-reviewed form as the source of truth. It
 skips extraction, runs the finalization graph and duplicate detection, assembles the refreshed
@@ -148,6 +170,7 @@ Routes translate HTTP; services hold the logic.
 | Service | Responsibility |
 | --- | --- |
 | `document_extract` | pypdf native text, PyMuPDF page rendering, Qwen Vision OCR, ordered provenance |
+| `intake_dialogue` | Pending-field policy, partial date memory, validation feedback, unavailable values, loop protection |
 | `completeness` | Critical/optional field lists, weighted score, rule-based follow-up questions |
 | `risk_rules` | Keyword + complaint-type heuristic, and `merge_with_floor` |
 | `complaint_service` | All persistence: create (with numbering), list, get, update, delete |
@@ -364,7 +387,7 @@ Search terms are bound parameters inside `ILIKE`.
 not.
 
 **What is deliberately missing:** authentication, rate limiting, virus scanning of uploads, and
-per-user audit. For a take-home the honest position is to name them rather than half-build them
+per-user audit. For this prototype the honest position is to name them rather than half-build them
 — they are the first three items to add before this touches a regulated environment.
 
 ---

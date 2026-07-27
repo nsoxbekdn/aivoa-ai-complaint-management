@@ -22,6 +22,29 @@ from app.schemas.analysis import ExtractedComplaintFields
 VERBATIM_FIELDS = ("batch_lot_number", "customer_contact", "product_strength_grade")
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_NUMBER_WORDS = {
+    0: "zero",
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
+    11: "eleven",
+    12: "twelve",
+    13: "thirteen",
+    14: "fourteen",
+    15: "fifteen",
+    16: "sixteen",
+    17: "seventeen",
+    18: "eighteen",
+    19: "nineteen",
+    20: "twenty",
+}
 
 
 def _normalise(value: str) -> str:
@@ -46,7 +69,13 @@ def _ground_fields(fields: ExtractedComplaintFields, source: str) -> tuple[Extra
     quantity = fields.quantity_affected
     if quantity is not None:
         digits = str(int(quantity)) if float(quantity).is_integer() else str(quantity)
-        if digits not in re.sub(r"[^0-9.]", "", source):
+        integer_quantity = int(quantity) if float(quantity).is_integer() else None
+        number_word = _NUMBER_WORDS.get(integer_quantity) if integer_quantity is not None else None
+        source_words = set(re.findall(r"[a-z]+", source.lower()))
+        if (
+            digits not in re.sub(r"[^0-9.]", "", source)
+            and (number_word is None or number_word not in source_words)
+        ):
             updates["quantity_affected"] = None
             warnings.append(
                 "Discarded AI value for 'quantity affected' because that number does not appear "

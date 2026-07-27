@@ -106,10 +106,15 @@ class ExtractedComplaintFields(BaseModel):
     @classmethod
     def _clean_quantity(cls, value: Any) -> Any:
         value = _blank_to_none(value)
-        if value is None or isinstance(value, (int, float)):
+        if value is None:
             return value
-        match = re.search(r"\d+(?:\.\d+)?", str(value))
-        return float(match.group()) if match else None
+        if isinstance(value, (int, float)):
+            return value if value > 0 else None
+        match = re.search(r"-?\d+(?:\.\d+)?", str(value))
+        if not match:
+            return None
+        quantity = float(match.group())
+        return quantity if quantity > 0 else None
 
     @field_validator("complaint_source", mode="before")
     @classmethod

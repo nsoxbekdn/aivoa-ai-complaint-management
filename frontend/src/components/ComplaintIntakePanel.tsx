@@ -14,6 +14,21 @@ import { ErrorAlert } from './ErrorAlert';
 
 const MAX_UPLOAD_MB = 5;
 const ACCEPTED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg'];
+const COMPLETENESS_LABEL_BY_FIELD: Record<string, string> = {
+  complaint_source: 'complaint source',
+  customer_name: 'customer name',
+  customer_contact: 'customer contact',
+  product_name: 'product name',
+  product_strength_grade: 'product strength / grade',
+  batch_lot_number: 'batch / lot number',
+  manufacturing_date: 'manufacturing date',
+  expiry_date: 'expiry date',
+  quantity_affected: 'quantity affected',
+  quantity_unit: 'quantity unit',
+  complaint_type: 'complaint type',
+  complaint_date: 'complaint date',
+  complaint_details: 'complaint details',
+};
 
 function PaperclipIcon() {
   return (
@@ -55,13 +70,18 @@ export function ComplaintIntakePanel() {
   const canSend = Boolean(message.trim() || file) && !pending;
   const completeness = analysis?.completeness;
   const reporterReadyToLodge = Boolean(analysis) && isReporterReadyToLodge(formData);
+  const unavailableLabels = new Set(
+    intakeChat.dialogueState.unavailable_fields.map(
+      (field) => COMPLETENESS_LABEL_BY_FIELD[field] ?? field.replaceAll('_', ' '),
+    ),
+  );
   const missing = completeness
     ? [
         ...completeness.missing_critical_fields,
         ...completeness.missing_optional_fields.filter(
           (field) => field !== 'initial severity' && field !== 'priority',
         ),
-      ]
+      ].filter((field) => !unavailableLabels.has(field))
     : [];
 
   useEffect(() => {
@@ -109,6 +129,7 @@ export function ComplaintIntakePanel() {
           message: text,
           currentFields: formData,
           history: intakeChat.messages,
+          dialogueState: intakeChat.dialogueState,
           file: file ?? undefined,
         }),
       );

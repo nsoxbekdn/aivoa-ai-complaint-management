@@ -6,6 +6,7 @@ import type {
   Complaint,
   ComplaintAnalysisResponse,
   ComplaintFormData,
+  IntakeDialogueState,
   IntakeChatResponse,
   ComplaintListResponse,
 } from '../../types/complaint';
@@ -58,6 +59,7 @@ export async function continueIntakeChatRequest(input: {
   message: string;
   currentFields: ComplaintFormData;
   history: { role: 'user' | 'assistant'; text: string }[];
+  dialogueState: IntakeDialogueState;
   file?: File;
 }): Promise<IntakeChatResponse> {
   const current_fields = Object.fromEntries(
@@ -71,6 +73,7 @@ export async function continueIntakeChatRequest(input: {
     form.append('message', input.message);
     form.append('current_fields', JSON.stringify(current_fields));
     form.append('history', JSON.stringify(input.history.slice(-20)));
+    form.append('dialogue_state', JSON.stringify(input.dialogueState));
     form.append('file', input.file);
     const { data } = await http.post<IntakeChatResponse>(
       '/complaints/intake/chat/attachment',
@@ -82,6 +85,7 @@ export async function continueIntakeChatRequest(input: {
     message: input.message,
     current_fields,
     history: input.history.slice(-20),
+    dialogue_state: input.dialogueState,
   });
   return data;
 }
