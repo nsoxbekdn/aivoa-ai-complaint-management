@@ -122,6 +122,16 @@ export function isReporterReadyToLodge(form: ComplaintFormData): boolean {
   return Boolean(hasCoreFields && (!needsQuantity || form.quantity_affected.trim()));
 }
 
+/** Whether the reporter has already entered any factual complaint information manually. */
+export function hasReporterFacts(form: ComplaintFormData): boolean {
+  return (Object.keys(form) as ComplaintFormField[]).some(
+    (field) =>
+      field !== 'initial_severity' &&
+      field !== 'priority' &&
+      Boolean(form[field].trim()),
+  );
+}
+
 /** Build the atomic finalize request. The server regenerates QA output from these final facts. */
 export function buildCreatePayload(
   form: ComplaintFormData,

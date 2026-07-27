@@ -9,7 +9,10 @@ import {
   setPastedText,
   setUploadedFile,
 } from '../features/complaints/complaintsSlice';
-import { isReporterReadyToLodge } from '../features/complaints/formUtils';
+import {
+  hasReporterFacts,
+  isReporterReadyToLodge,
+} from '../features/complaints/formUtils';
 import { ErrorAlert } from './ErrorAlert';
 
 const MAX_UPLOAD_MB = 5;
@@ -69,7 +72,8 @@ export function ComplaintIntakePanel() {
   const pending = analyzing || intakeChat.pending;
   const canSend = Boolean(message.trim() || file) && !pending;
   const completeness = analysis?.completeness;
-  const reporterReadyToLodge = Boolean(analysis) && isReporterReadyToLodge(formData);
+  const formHasReporterFacts = hasReporterFacts(formData);
+  const reporterReadyToLodge = isReporterReadyToLodge(formData);
   const unavailableLabels = new Set(
     intakeChat.dialogueState.unavailable_fields.map(
       (field) => COMPLETENESS_LABEL_BY_FIELD[field] ?? field.replaceAll('_', ' '),
@@ -120,7 +124,7 @@ export function ComplaintIntakePanel() {
     if (!canSend) return;
     const text = message.trim();
     setLocalError(null);
-    if (!analysis) {
+    if (!analysis && !formHasReporterFacts) {
       dispatch(setPastedText(text));
       dispatch(analyzeComplaint({ text: text || undefined, file: file ?? undefined }));
     } else {
@@ -275,7 +279,11 @@ export function ComplaintIntakePanel() {
               value={message}
               disabled={pending}
               aria-label="Message the complaint assistant"
-              placeholder={analysis ? 'Reply, correct a detail, or attach another file…' : 'Describe what happened…'}
+              placeholder={
+                analysis || formHasReporterFacts
+                  ? 'Ask a question, add or correct a detail…'
+                  : 'Describe what happened…'
+              }
               onChange={(event) => setMessage(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -306,7 +314,7 @@ export function ComplaintIntakePanel() {
           </div>
         )}
 
-        {analysis && (
+        {(analysis || formHasReporterFacts) && (
           <button type="button" className="button button--link intake-chat__new" onClick={handleNewComplaint}>
             Start a new complaint
           </button>
