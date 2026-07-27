@@ -14,13 +14,13 @@ risk, possible root causes, investigation steps, duplicate hints, and CAPA sugge
 > **The UI separates reporting from investigation.** A reporter sees only the conversation and
 > factual complaint form. Preliminary risk and investigation guidance are shown after lodging,
 > where a QA worker can review and change status, severity, and priority. Authentication and
-> role enforcement are deliberately not implemented in this take-home.
+> role enforcement are deliberately outside this prototype's scope.
 
 ### A note on the Groq model
 
-The original assessment requested `gemma2-9b-it`. Groq retired that model before submission, so
-this project keeps model selection environment-configurable and uses a currently supported Groq
-production model. Defaults:
+The original technical requirement requested `gemma2-9b-it`. Groq retired that model before
+implementation was completed, so this project keeps model selection environment-configurable and
+uses a currently supported Groq production model. Defaults:
 
 ```
 GROQ_MODEL=openai/gpt-oss-120b
@@ -35,7 +35,7 @@ Where a Pydantic model exists for the answer, its **strict JSON Schema is sent a
 `json_object` and then to prompt-only JSON, and the reply is validated by Pydantic either way.
 Verified live against `openai/gpt-oss-120b`: schema mode is accepted and used on the first call.
 
-### OCR in one interview-ready explanation
+### OCR data flow
 
 `pypdf` reads PDFs that already contain selectable text. For a scanned PDF, `PyMuPDF` renders
 each unreadable page as a normalized RGB image; it does **not** transcribe it. The existing Groq
@@ -82,7 +82,7 @@ flowchart LR
 
     subgraph API["FastAPI backend"]
         R["/api/complaints/* routes"]
-        S["services<br/>documents · completeness · risk rules · duplicates"]
+        S["services<br/>documents · dialogue · completeness · risk · duplicates"]
         G["LangGraph StateGraphs<br/>intake + authoritative finalization"]
         L["Groq client<br/>text models + Qwen Vision OCR"]
         DB[("PostgreSQL<br/>SQLAlchemy + Alembic")]
@@ -110,7 +110,10 @@ Full detail — request flow, node-by-node graph description, failure handling �
 - PDF, PNG, JPG, and JPEG input; native PDF text via `pypdf`, scanned pages via Groq Qwen Vision
 - The assistant repeats its understanding before moving on
 - Missing information is collected with one focused counter-question at a time
-- Reporters can correct a fact conversationally and ask what a form term means
+- Explicit dialogue state remembers the pending question and useful partial answers across turns
+- Invalid or ambiguous values receive a specific explanation instead of a repeated generic prompt
+- Reporters can correct facts, ask why information is needed, or mark optional data unavailable
+- Loop protection changes the wording and provides an example after repeated unclear answers
 - Extracted facts populate an editable complaint form with visible AI provenance
 - A complaint can be lodged only after the minimum factual record is complete
 
@@ -289,8 +292,8 @@ alembic downgrade -1                              # roll back one
 | --- | --- | --- |
 | GET | `/api/health` | Liveness + whether the LLM is configured |
 | POST | `/api/complaints/analyze` | Start intake from PDF **or** text and run the AI workflow. **Saves nothing** |
-| POST | `/api/complaints/intake/chat` | Interpret a follow-up, correction, or definition question and return the next intake turn |
-| POST | `/api/complaints/intake/chat/attachment` | Continue intake with text and/or another PDF/image |
+| POST | `/api/complaints/intake/chat` | Interpret a stateful human-language turn and return validated fields, feedback, action, and next dialogue state |
+| POST | `/api/complaints/intake/chat/attachment` | Continue the same stateful intake with text and/or another PDF/image |
 | POST | `/api/complaints/finalize` | Regenerate QA analysis from final form facts and atomically lodge the complaint |
 | POST | `/api/complaints` | Backward-compatible direct create endpoint |
 | GET | `/api/complaints` | List with `limit`, `offset`, `search`, `status` |
@@ -410,7 +413,7 @@ overwrites the previous value in place. Adding them is the first item in *Future
 | `05_scanned_leaking_bottle.pdf` / `.jpg` | Image-only leaking-bottle complaint for Qwen Vision OCR | high |
 
 `expected_fields.json` holds the reference answers. `python samples/make_sample_pdfs.py`
-turns each `.txt` into a text-layer PDF for demoing the upload path. All names, products,
+turns each `.txt` into a text-layer PDF for testing the upload path. All names, products,
 batches and contacts are fictional.
 
 `python samples/make_scanned_sample.py` regenerates the image-only OCR sample.
@@ -421,7 +424,7 @@ batches and contacts are fictional.
 
 ```bash
 cd backend
-python -m pytest              # 74 tests, no network access — the Groq client is mocked
+python -m pytest              # 80 tests, no network access — the Groq client is mocked
 ```
 
 ```bash
@@ -434,10 +437,12 @@ Backend coverage: health, analyze validation (missing input, wrong file type, co
 oversized upload, provider not configured), the full analyze happy path, native/scanned/mixed
 PDF extraction, PNG/JPG OCR, the three-page OCR cap, malformed vision JSON, CRUD + complaint
 numbering + JSON columns, authoritative finalization, provider-down lodging, list/search, update,
-delete, conversational intake updates and definition questions, persisted intake/internal QA
-fields, completeness scoring, negation-aware risk rules and floor behaviour, JSON repair, schema
-hardening (null-ish strings, unparseable dates, unknown enums), the graph's repair loop and
-its retry ceiling, provider-down degradation, input truncation, and duplicate detection.
+delete, conversational updates, definition questions, invalid and partial dates, later-turn
+completion, number words, corrections, unavailable information, repeated unclear answers,
+persisted intake/internal QA fields, completeness scoring, negation-aware risk rules and floor
+behaviour, JSON repair, schema hardening (null-ish strings, unparseable dates, unknown enums),
+the graph's repair loop and retry ceiling, provider-down degradation, input truncation, and
+duplicate detection.
 
 The Groq client has its own suite (`tests/test_llm_client.py`) covering the strict-schema
 builder, the `json_schema → json_object → prompt-only` downgrade and its per-model cache, and
@@ -473,18 +478,3 @@ burning the fallback model on a shape problem.
 6. Attachments (photographs of the defect) stored in object storage.
 7. Export to the CAPA/QMS system, plus a printable complaint form.
 8. Golden-set evaluation harness scoring extraction accuracy against `expected_fields.json`.
-
----
-
-## Demo video checklist
-
-See [DEMO_SCRIPT.md](DEMO_SCRIPT.md) for the full talk track.
-
-- [ ] Both servers running, database migrated, `GROQ_API_KEY` set
-- [ ] `/api/health` shows `"llm_configured": true`
-- [ ] Video 1 — product: describe/upload → assistant confirms understanding → follow-up and
-      correction → lodge → list → internal QA detail with risk/investigation/CAPA → PDF flow
-- [ ] Video 2 — code: `main.tsx` → store → slice → api.ts → `main.py` → routes → schemas →
-      model → graph state → nodes → conditional retry → Groq client → save flow → tests →
-      security and limitations
-- [ ] Say out loud, at least once, that AI output is preliminary and needs human review
