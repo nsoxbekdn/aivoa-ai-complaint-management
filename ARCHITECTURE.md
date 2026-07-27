@@ -47,10 +47,13 @@ Conversational intake, step by step:
    component state (a `File` is not serialisable, so it must not go into the store).
 2. The persistent chat composer accepts text and/or a PDF, PNG, or JPG. Its circular send action
    dispatches `analyzeComplaint({ text, file })`; the thunk posts `FormData` to
-   `/api/complaints/analyze`, which runs LangGraph but writes nothing.
+   `/api/complaints/analyze`, which runs LangGraph but writes nothing. If the reporter already
+   entered any form facts, the first chat message instead uses `continueIntakeChat` with that
+   current form so it is not misread as a brand-new complaint.
 3. On `fulfilled`, `formFromAnalysis` maps factual `extracted_fields` onto `formData`, records
    their AI provenance, and adds two chat bubbles: "Here is what I understood" plus the first
-   relevant missing-information question.
+   relevant missing-information question. Fields already marked as human-owned are never
+   overwritten by an initial analysis response.
 4. Each later reply dispatches `continueIntakeChat`. Text turns use
    `/api/complaints/intake/chat`; turns with another attachment use the multipart
    `/api/complaints/intake/chat/attachment`. Both send current factual fields, the recent
@@ -61,9 +64,11 @@ Conversational intake, step by step:
 6. `services/intake_dialogue.py` preserves useful partial values, recognises unavailable answers,
    selects one pending field, tracks retries, and chooses an explicit action such as accepted,
    corrected, partial, invalid, ambiguous, answer-question, unavailable, or ready.
-7. The reducer applies returned fields, stores the returned dialogue state, and appends the user
-   and assistant messages to `intakeChat.messages`. A short answer such as `2025` can therefore
-   complete an earlier `25 June`, while a natural correction updates the same editable form.
+7. The reducer applies only the response's explicit `changed_fields`, stores the returned
+   dialogue state, and appends the user and assistant messages to `intakeChat.messages`. It does
+   not replay the complete request snapshot, so a form edit made while chat is pending cannot be
+   erased. A short answer such as `2025` can therefore complete an earlier `25 June`, while a
+   natural correction updates the same editable form.
 8. Risk, root-cause, investigation, duplicate, and CAPA output remain out of the intake UI.
    When minimum factual completeness is reached, the **Lodge complaint** action becomes
    available.

@@ -191,13 +191,11 @@ export function ComplaintForm() {
           <button
             type="submit"
             className="button button--primary"
-            disabled={saving || !analysis || !reporterReadyToLodge}
+            disabled={saving || !reporterReadyToLodge}
             title={
-              !analysis
-                ? 'Describe the complaint to the assistant first'
-                : !reporterReadyToLodge
-                  ? 'Answer the assistant’s required follow-up or complete the required facts'
-                  : undefined
+              !reporterReadyToLodge
+                ? 'Answer the assistant’s required follow-up or complete the required facts'
+                : undefined
             }
           >
             {saving && <span className="spinner" aria-hidden="true" />}

@@ -84,7 +84,7 @@ export interface ComplaintsState {
 const INTAKE_WELCOME: ChatMessage = {
   role: 'assistant',
   text:
-    'Hello! Tell me what went wrong with the product in your own words. You can paste an email or attach a complaint PDF, and I will help fill in the form.',
+    'Hello! Tell me what happened, attach a complaint document, or fill in any facts you already know. I will continue from what is already in the form and ask only for what is still needed.',
 };
 
 const EMPTY_DIALOGUE_STATE: IntakeDialogueState = {
@@ -308,8 +308,15 @@ const complaintsSlice = createSlice({
         state.analysis = action.payload;
         // This is the automatic form population the whole product is built around.
         const { form, sources } = formFromAnalysis(action.payload);
-        state.formData = form;
-        state.fieldSources = sources;
+        // Never erase facts the reporter edited while analysis was running. AI values
+        // populate untouched fields, while human-owned values remain authoritative.
+        (Object.keys(form) as ComplaintFormField[]).forEach((field) => {
+          if (state.fieldSources[field] === 'user') return;
+          if (form[field].trim()) {
+            state.formData[field] = form[field];
+            state.fieldSources[field] = sources[field];
+          }
+        });
         state.validationErrors = {};
         const reporterMissing = [
           ...action.payload.completeness.missing_critical_fields,
@@ -361,6 +368,36 @@ const complaintsSlice = createSlice({
         });
         state.intakeChat.readyToLodge = action.payload.ready_to_lodge;
         state.intakeChat.dialogueState = action.payload.dialogue_state;
+        // Manual-first intake has no initial analysis response. Seed lightweight intake
+        // state from this continuation so completeness and later chat turns work normally.
+        if (!state.analysis) {
+          state.analysis = {
+            extracted_fields: action.payload.updated_fields,
+            completeness: action.payload.completeness,
+            risk_assessment: {
+              risk_level: 'unknown',
+              severity: 'unknown',
+              priority: 'medium',
+              patient_safety_concern: false,
+              product_quality_concern: false,
+              rationale: '',
+              confidence: 0,
+            },
+            summary: action.payload.updated_fields.complaint_details ?? '',
+            recommendations: {
+              possible_root_causes: [],
+              initial_investigation_steps: [],
+              preliminary_capa_suggestions: [],
+            },
+            warnings: [],
+            duplicate_candidates: [],
+            original_text: '',
+            input_filename: null,
+            source_documents: [],
+            disclaimer:
+              'AI-generated analysis is preliminary and requires qualified review.',
+          };
+        }
         if (action.payload.source_document && state.analysis) {
           state.analysis.source_documents.push(action.payload.source_document);
           state.analysis.original_text = [
@@ -376,13 +413,14 @@ const complaintsSlice = createSlice({
             .find((message) => message.role === 'user');
           if (lastUserMessage) lastUserMessage.ocrUsed = action.payload.source_document.ocr_used;
         }
-        const fields = action.payload.updated_fields;
-        (Object.keys(fields) as ComplaintFormField[]).forEach((field) => {
-          const value = fields[field as keyof typeof fields];
+        // Apply only facts actually learned or corrected in this turn. Re-copying the
+        // whole request snapshot would overwrite any form edits made while chat was pending.
+        action.payload.changed_fields.forEach((changedField) => {
+          if (!(changedField in state.formData)) return;
+          const field = changedField as ComplaintFormField;
+          const value = action.payload.updated_fields[field];
           state.formData[field] = value === null || value === undefined ? '' : String(value);
-        });
-        action.payload.changed_fields.forEach((field) => {
-          if (field in state.formData) state.fieldSources[field as ComplaintFormField] = 'ai';
+          state.fieldSources[field] = 'ai';
         });
         if (state.analysis) {
           state.analysis.extracted_fields = action.payload.updated_fields;

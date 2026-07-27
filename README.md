@@ -114,8 +114,11 @@ Full detail — request flow, node-by-node graph description, failure handling �
 - Invalid or ambiguous values receive a specific explanation instead of a repeated generic prompt
 - Reporters can correct facts, ask why information is needed, or mark optional data unavailable
 - Loop protection changes the wording and provides an example after repeated unclear answers
+- Form-first and chat-first entry are interchangeable; chat continues from existing manual facts
+  and never replaces them with a stale AI snapshot
 - Extracted facts populate an editable complaint form with visible AI provenance
-- A complaint can be lodged only after the minimum factual record is complete
+- A manually or conversationally completed complaint can be lodged once the minimum factual
+  record is complete
 
 **Internal QA workspace**
 - Structured field extraction — constrained by a strict JSON Schema at generation time, then
