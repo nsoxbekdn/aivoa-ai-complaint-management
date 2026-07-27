@@ -18,6 +18,8 @@ from app.schemas.complaint import (
     ComplaintUpdate,
 )
 from app.schemas.intake import (
+    IntakeDialogueState,
+    IntakeFieldCandidate,
     IntakeChatInterpretation,
     IntakeChatMessage,
     IntakeChatRequest,
@@ -38,6 +40,8 @@ __all__ = [
     "CompletenessAssessment",
     "DuplicateCandidate",
     "ExtractedComplaintFields",
+    "IntakeDialogueState",
+    "IntakeFieldCandidate",
     "IntakeChatInterpretation",
     "IntakeChatMessage",
     "IntakeChatRequest",

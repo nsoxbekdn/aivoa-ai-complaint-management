@@ -108,8 +108,8 @@ export function validateForm(form: ComplaintFormData): Partial<Record<ComplaintF
   if (form.quantity_affected && Number.isNaN(Number(form.quantity_affected))) {
     errors.quantity_affected = 'Quantity must be a number';
   }
-  if (form.quantity_affected && Number(form.quantity_affected) < 0) {
-    errors.quantity_affected = 'Quantity cannot be negative';
+  if (form.quantity_affected && Number(form.quantity_affected) <= 0) {
+    errors.quantity_affected = 'Quantity must be greater than zero';
   }
 
   return errors;

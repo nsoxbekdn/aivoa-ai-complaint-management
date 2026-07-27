@@ -129,9 +129,40 @@ export interface IntakeChatResponse {
   updated_fields: ExtractedComplaintFields;
   completeness: CompletenessAssessment;
   changed_fields: string[];
+  action: IntakeAction;
+  validation_feedback: IntakeFieldCandidate[];
+  dialogue_state: IntakeDialogueState;
   ready_to_lodge: boolean;
   warnings: string[];
   source_document: SourceDocument | null;
+}
+
+export type IntakeAction =
+  | 'accept_information'
+  | 'confirm_correction'
+  | 'ask_missing_detail'
+  | 'clarify_partial_value'
+  | 'explain_invalid_value'
+  | 'clarify_ambiguous_value'
+  | 'answer_question'
+  | 'acknowledge_unavailable'
+  | 'confirm_understanding'
+  | 'ready_to_lodge';
+
+export interface IntakeFieldCandidate {
+  field: string;
+  raw_value: string;
+  status: 'accepted' | 'partial' | 'invalid' | 'ambiguous';
+  reason: string | null;
+}
+
+export interface IntakeDialogueState {
+  pending_field: string | null;
+  partial_fields: Record<string, string>;
+  unavailable_fields: string[];
+  question_history: string[];
+  retry_counts: Record<string, number>;
+  last_action: IntakeAction | null;
 }
 
 export interface Complaint {

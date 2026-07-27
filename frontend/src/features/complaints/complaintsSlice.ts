@@ -23,6 +23,7 @@ import type {
   ComplaintAnalysisResponse,
   ComplaintFormData,
   ComplaintFormField,
+  IntakeDialogueState,
   IntakeChatResponse,
   ComplaintListResponse,
   FieldSourceMap,
@@ -53,6 +54,7 @@ export interface ComplaintsState {
     pending: boolean;
     error: string | null;
     readyToLodge: boolean;
+    dialogueState: IntakeDialogueState;
   };
 
   saving: boolean;
@@ -85,6 +87,15 @@ const INTAKE_WELCOME: ChatMessage = {
     'Hello! Tell me what went wrong with the product in your own words. You can paste an email or attach a complaint PDF, and I will help fill in the form.',
 };
 
+const EMPTY_DIALOGUE_STATE: IntakeDialogueState = {
+  pending_field: null,
+  partial_fields: {},
+  unavailable_fields: [],
+  question_history: [],
+  retry_counts: {},
+  last_action: null,
+};
+
 const initialState: ComplaintsState = {
   formData: { ...EMPTY_FORM },
   fieldSources: {},
@@ -100,6 +111,7 @@ const initialState: ComplaintsState = {
     pending: false,
     error: null,
     readyToLodge: false,
+    dialogueState: { ...EMPTY_DIALOGUE_STATE },
   },
   saving: false,
   saveError: null,
@@ -141,6 +153,7 @@ export const continueIntakeChat = createAsyncThunk<
     message: string;
     currentFields: ComplaintFormData;
     history: ChatMessage[];
+    dialogueState: IntakeDialogueState;
     file?: File;
   },
   { rejectValue: string }
@@ -256,6 +269,7 @@ const complaintsSlice = createSlice({
         pending: false,
         error: null,
         readyToLodge: false,
+        dialogueState: { ...EMPTY_DIALOGUE_STATE },
       };
     },
     dismissAnalysisError(state) {
@@ -346,6 +360,7 @@ const complaintsSlice = createSlice({
           text: action.payload.assistant_message,
         });
         state.intakeChat.readyToLodge = action.payload.ready_to_lodge;
+        state.intakeChat.dialogueState = action.payload.dialogue_state;
         if (action.payload.source_document && state.analysis) {
           state.analysis.source_documents.push(action.payload.source_document);
           state.analysis.original_text = [
