@@ -1,0 +1,103 @@
+{
+  "_note": "Reference answers for the sample complaints. Used as a manual check that the AI extraction and risk triage behave sensibly. All companies, people, products, batches and contact details are fictional. The AI output is advisory: expected_risk_level is the lowest acceptable rating, not a guarantee.",
+  "01_tablet_discoloration.txt": {
+    "extracted_fields": {
+      "complaint_source": "customer_email",
+      "customer_name": "Northfield Health Dispensary",
+      "customer_contact": "pharmacy.qa@northfield-health.example",
+      "product_name": "Cardiostat 10 mg Tablets",
+      "product_strength_grade": "10 mg",
+      "batch_lot_number": "CRD-25084",
+      "manufacturing_date": "2025-08-19",
+      "expiry_date": "2027-08-31",
+      "quantity_affected": 40,
+      "quantity_unit": "tablets",
+      "complaint_type": "product_quality_defect",
+      "complaint_date": "2026-06-12",
+      "initial_severity": "major",
+      "priority": "high"
+    },
+    "expected_risk_level": "high",
+    "expected_completeness": "complete (no missing critical fields)",
+    "expected_root_cause_themes": [
+      "degradation or oxidation of the active ingredient",
+      "moisture ingress through the container closure",
+      "coating or excipient interaction"
+    ]
+  },
+  "02_leaking_bottle.txt": {
+    "extracted_fields": {
+      "complaint_source": "distributor",
+      "customer_name": "Delta Medical Supplies",
+      "customer_contact": "anand.k@deltamedsupplies.example",
+      "product_name": "Pediasyrup Paracetamol Oral Suspension 250 mg/5 ml",
+      "product_strength_grade": "250 mg/5 ml",
+      "batch_lot_number": "PDS-24990",
+      "manufacturing_date": "2025-12-04",
+      "expiry_date": "2027-12-31",
+      "quantity_affected": 18,
+      "quantity_unit": "bottles",
+      "complaint_type": "packaging_defect",
+      "complaint_date": "2026-05-28",
+      "initial_severity": "major",
+      "priority": "high"
+    },
+    "expected_risk_level": "high",
+    "expected_completeness": "complete (no missing critical fields)",
+    "expected_root_cause_themes": [
+      "capping torque out of specification",
+      "induction seal not applied or not sealed correctly",
+      "bottle neck finish dimensional variation"
+    ]
+  },
+  "03_incorrect_label_strength.txt": {
+    "extracted_fields": {
+      "complaint_source": "healthcare_professional",
+      "customer_name": "Stellaris Hospital",
+      "customer_contact": "hospital.pharmacy@stellaris-hospital.example",
+      "product_name": "Thyronex 5 mg Tablets",
+      "product_strength_grade": "5 mg",
+      "batch_lot_number": "THX-26011",
+      "manufacturing_date": null,
+      "expiry_date": "2028-01-31",
+      "quantity_affected": 4,
+      "quantity_unit": "cartons",
+      "complaint_type": "wrong_product_or_strength",
+      "complaint_date": "2026-07-03",
+      "initial_severity": "critical",
+      "priority": "urgent"
+    },
+    "expected_risk_level": "critical",
+    "expected_completeness": "complete (manufacturing date is missing but optional)",
+    "expected_root_cause_themes": [
+      "line clearance failure between two strengths",
+      "incorrect blister reel loaded at the packaging line",
+      "packaging reconciliation not detecting the mix-up"
+    ]
+  },
+  "04_particulate_in_injectable.txt": {
+    "extracted_fields": {
+      "complaint_source": "healthcare_professional",
+      "customer_name": "Riverside Oncology Centre",
+      "customer_contact": "n.okafor@riverside-oncology.example",
+      "product_name": "Onkovex 100 mg/10 ml Solution for Injection",
+      "product_strength_grade": "100 mg/10 ml",
+      "batch_lot_number": "OVX-26042",
+      "manufacturing_date": null,
+      "expiry_date": "2027-04-30",
+      "quantity_affected": 2,
+      "quantity_unit": "vials",
+      "complaint_type": "contamination",
+      "complaint_date": "2026-07-18",
+      "initial_severity": "critical",
+      "priority": "urgent"
+    },
+    "expected_risk_level": "critical",
+    "expected_completeness": "complete (manufacturing date is missing but optional)",
+    "expected_root_cause_themes": [
+      "filtration failure or filter integrity breach",
+      "fibre shedding from garments or wipes in the filling area",
+      "stopper or vial washing process deficiency"
+    ]
+  }
+}

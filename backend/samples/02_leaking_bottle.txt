@@ -1,0 +1,21 @@
+COMPLAINT INTAKE NOTE - recorded by distributor helpdesk
+
+Received: 2026-05-28, 09:40
+Reported by: Delta Medical Supplies (distributor), Mr Anand Kulkarni, anand.k@deltamedsupplies.example
+Product: Pediasyrup Paracetamol Oral Suspension 250 mg/5 ml
+Batch / Lot: PDS-24990
+Manufacturing date: 2025-12-04
+Expiry: 2027-12-31
+
+Description as reported:
+"Out of a shipment of 240 bottles received on 26 May, 18 bottles were leaking inside the outer
+carton. The syrup had soaked the cardboard partitions and three cartons were wet on the base.
+The caps appear to be loose - two of them could be turned by hand without breaking the tamper
+ring. The remaining bottles in the same cartons are sticky on the outside but appear full."
+
+Storage / transport: shipped by road, ambient. No temperature excursion reported.
+Sample availability: the distributor has kept the 18 leaking bottles and the wet cartons.
+Photographs: yes, sent by email on 2026-05-28.
+
+Distributor requests replacement stock and asks whether the remaining 222 bottles from the
+shipment can still be sold.

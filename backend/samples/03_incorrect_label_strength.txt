@@ -1,0 +1,27 @@
+From: hospital.pharmacy@stellaris-hospital.example
+To: complaints@aivoa-pharma.example
+Date: 2026-07-03
+Subject: URGENT - carton labelled 5 mg contains 10 mg blisters, Thyronex, batch THX-26011
+
+To whom it may concern,
+
+During a routine stock check this morning our pharmacy technician opened a carton of
+Thyronex 5 mg Tablets, batch THX-26011, expiry 2028-01-31, and found that the blister strips
+inside are printed "Thyronex 10 mg". The outer carton and the patient information leaflet both
+say 5 mg. The blisters are otherwise sealed and undamaged.
+
+We checked the rest of the delivery: 4 cartons out of 20 from this batch contain 10 mg blisters
+in a 5 mg carton. The other 16 appear correct.
+
+Thyronex is a narrow therapeutic index product and a doubling of the dose would be clinically
+significant. No units from this delivery have been dispensed to patients - the discrepancy was
+found before the stock was released. All 20 cartons have been quarantined and labelled
+"DO NOT DISPENSE".
+
+We consider this a potential product mix-up and request an urgent response, including whether
+other batches or sites are affected.
+
+Regards,
+Dr Helena Vasquez
+Chief Pharmacist, Stellaris Hospital
+Direct line: +1 617 555 0134

@@ -1,0 +1,26 @@
+From: pharmacy.qa@northfield-health.example
+To: complaints@aivoa-pharma.example
+Date: 12 June 2026
+Subject: Discoloured tablets - Cardiostat 10 mg Tablets, batch CRD-25084
+
+Dear Quality Assurance team,
+
+I am the responsible pharmacist at Northfield Health Dispensary. On 11 June 2026 a patient
+returned an unopened bottle of Cardiostat 10 mg Tablets (batch CRD-25084, manufactured
+2025-08-19, expiry 2027-08-31) because the tablets had changed colour.
+
+We opened a second bottle from the same delivery and found the same problem: roughly 40 of the
+90 tablets have brown mottled patches on one face, while the rest look normal. There is no
+unusual smell and the bottle seal was intact when opened. The stock has been stored in our
+dispensary at room temperature, away from direct sunlight, since delivery on 2 June 2026.
+
+We have quarantined the remaining 6 bottles from this delivery and have not dispensed any
+further units. Photographs are available on request, and we have retained the affected bottles.
+
+Please advise whether we should return the stock and whether patients who already received
+tablets from this batch need to be contacted.
+
+Kind regards,
+Priya Raman
+Responsible Pharmacist, Northfield Health Dispensary
+Phone: +44 20 7946 0812

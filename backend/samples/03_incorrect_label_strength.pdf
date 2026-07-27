@@ -1,0 +1,67 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1521 >>
+stream
+BT /F1 10 Tf 56 786 Td 14 TL
+(From: hospital.pharmacy@stellaris-hospital.example) Tj T*
+(To: complaints@aivoa-pharma.example) Tj T*
+(Date: 2026-07-03) Tj T*
+(Subject: URGENT - carton labelled 5 mg contains 10 mg blisters, Thyronex, batch) Tj T*
+(THX-26011) Tj T*
+() Tj T*
+(To whom it may concern,) Tj T*
+() Tj T*
+(During a routine stock check this morning our pharmacy technician opened a carton of) Tj T*
+(Thyronex 5 mg Tablets, batch THX-26011, expiry 2028-01-31, and found that the blister) Tj T*
+(strips) Tj T*
+(inside are printed "Thyronex 10 mg". The outer carton and the patient information) Tj T*
+(leaflet both) Tj T*
+(say 5 mg. The blisters are otherwise sealed and undamaged.) Tj T*
+() Tj T*
+(We checked the rest of the delivery: 4 cartons out of 20 from this batch contain 10 mg) Tj T*
+(blisters) Tj T*
+(in a 5 mg carton. The other 16 appear correct.) Tj T*
+() Tj T*
+(Thyronex is a narrow therapeutic index product and a doubling of the dose would be) Tj T*
+(clinically) Tj T*
+(significant. No units from this delivery have been dispensed to patients - the) Tj T*
+(discrepancy was) Tj T*
+(found before the stock was released. All 20 cartons have been quarantined and labelled) Tj T*
+("DO NOT DISPENSE".) Tj T*
+() Tj T*
+(We consider this a potential product mix-up and request an urgent response, including) Tj T*
+(whether) Tj T*
+(other batches or sites are affected.) Tj T*
+() Tj T*
+(Regards,) Tj T*
+(Dr Helena Vasquez) Tj T*
+(Chief Pharmacist, Stellaris Hospital) Tj T*
+(Direct line: +1 617 555 0134) Tj T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1884
+%%EOF
