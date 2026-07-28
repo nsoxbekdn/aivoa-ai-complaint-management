@@ -112,6 +112,11 @@ Full detail — request flow, node-by-node graph description, failure handling �
 - Text-only, file-only, and combined messages; attachments also work on later turns
 - PDF, PNG, JPG, and JPEG input; native PDF text via `pypdf`, scanned pages via Groq Qwen Vision
 - The assistant repeats its understanding before moving on
+- Replies are written by the model, not chosen from a template: every turn is decided
+  deterministically first, then re-worded from a plain-language fact sheet. A greeting, an
+  apology or an off-topic remark gets a human answer and the pending question is put back on the
+  table — while a reply that states a number nobody supplied is discarded for the deterministic
+  sentence, as is every reply when the provider is unavailable
 - Missing information is collected with one focused counter-question at a time
 - Explicit dialogue state remembers the pending question and useful partial answers across turns
 - Invalid or ambiguous values receive a specific explanation instead of a repeated generic prompt
@@ -262,6 +267,8 @@ python samples/make_sample_pdfs.py
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Primary model |
 | `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` | Tried if the primary model fails |
 | `GROQ_VISION_MODEL` | `qwen/qwen3.6-27b` | Vision model used for scanned-page and image OCR |
+| `GROQ_REPLY_MODEL` | `openai/gpt-oss-20b` | Wording of the intake assistant's replies only — never a decision and never a stored value. Deliberately the small model, so a cosmetic call cannot spend `GROQ_MODEL`'s token budget |
+| `GROQ_REASONING_EFFORT` | `low` | Caps the private chain of thought of a reasoning model, which is billed against the same completion budget as the answer. Groq accepts only `low`, `medium` or `high`; leave it **empty** for a model with no reasoning mode |
 | `FRONTEND_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | CORS allow-list (comma-separated) |
 | `MAX_UPLOAD_SIZE_MB` | `5` | Upload limit |
 | `MAX_INPUT_CHARS` | `40000` | Longer input is truncated with a warning |
