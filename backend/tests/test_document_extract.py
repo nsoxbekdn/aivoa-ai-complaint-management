@@ -126,21 +126,42 @@ def test_mixed_pdf_combines_native_and_ocr_pages_in_order(
 def test_more_than_three_scanned_pages_has_explicit_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        document_extract,
-        "complete_vision_json",
-        lambda *_args, **_kwargs: {
+    image_counts: list[int] = []
+
+    def fake_vision(_prompt: str, images: list[bytes], **_kwargs) -> dict:
+        image_counts.append(len(images))
+        return {
             "pages": [
                 {"page_number": page, "text": f"OCR page {page}"} for page in (1, 2, 3)
             ]
-        },
+        }
+
+    monkeypatch.setattr(
+        document_extract,
+        "complete_vision_json",
+        fake_vision,
     )
 
     source, warnings = extract_document(_scanned_pdf(4), "four-pages.pdf", "application/pdf")
 
+    assert image_counts == [3]
     assert source.page_count == 4
     assert any("skipped" in warning.lower() for warning in warnings)
     assert "[Page 4]" not in source.text
+
+
+def test_rendered_vision_payload_limit_is_checked_after_base64_growth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        document_extract.get_settings(),
+        "max_vision_payload_mb",
+        1,
+        raising=False,
+    )
+
+    with pytest.raises(DocumentExtractionError, match="too large"):
+        document_extract._check_vision_payload([b"x" * 800_000])
 
 
 def test_malformed_or_empty_vision_json_fails_safely(

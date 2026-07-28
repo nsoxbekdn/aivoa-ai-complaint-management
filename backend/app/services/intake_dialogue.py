@@ -140,6 +140,78 @@ def is_unavailable_answer(message: str) -> bool:
     return bool(_UNAVAILABLE_RE.fullmatch(message))
 
 
+def may_be_unavailable_answer(message: str) -> bool:
+    """Sanity gate for the model's ``unavailable`` intent.
+
+    Marking a field unavailable is sticky — the assistant stops asking for it — so a wrong
+    call here quietly loses a required value. A message carrying a concrete value ("6 bottles",
+    "batch CC26045") is never a "cannot provide it", however the model labelled it. Phrasings
+    the strict regex above cannot cover ("the carton doesn't show it anywhere") still pass.
+    """
+    return not re.search(r"\d", message)
+
+
+# Canonical unit -> the spellings a reporter actually types. Mirrors QUANTITY_UNITS in the
+# frontend's labels.ts, so a parsed unit always matches an option in the form's dropdown.
+_UNIT_SPELLINGS = {
+    "tablets": ("tablet", "tablets", "tabs", "tab"),
+    "capsules": ("capsule", "capsules", "caps"),
+    "bottles": ("bottle", "bottles"),
+    "vials": ("vial", "vials"),
+    "ampoules": ("ampoule", "ampoules", "ampule", "ampules", "amps"),
+    "blisters": ("blister", "blisters", "strip", "strips"),
+    "cartons": ("carton", "cartons", "box", "boxes"),
+    "packs": ("pack", "packs", "packet", "packets"),
+    "units": ("unit", "units", "piece", "pieces", "pcs"),
+    "kg": ("kg", "kgs", "kilogram", "kilograms"),
+    "litres": ("litre", "litres", "liter", "liters"),
+}
+_UNIT_BY_SPELLING = {
+    spelling: canonical
+    for canonical, spellings in _UNIT_SPELLINGS.items()
+    for spelling in spellings
+}
+_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15,
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "hundred": 100,
+}
+_NUMBER = rf"(\d+(?:\.\d+)?|{'|'.join(_NUMBER_WORDS)})"
+_QUANTITY_WITH_UNIT_RE = re.compile(
+    rf"\b{_NUMBER}\s*({'|'.join(sorted(_UNIT_BY_SPELLING, key=len, reverse=True))})\b",
+    re.IGNORECASE,
+)
+_BARE_NUMBER_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
+
+
+def _as_number(token: str) -> float:
+    word = _NUMBER_WORDS.get(token.lower())
+    return float(word) if word is not None else float(token)
+
+
+def interpret_quantity_answer(
+    message: str, *, pending_field: str | None = None
+) -> tuple[float | None, str | None]:
+    """Parse "6 bottles not 5" without asking the LLM. Returns (quantity, canonical unit).
+
+    A quantity correction is the most common thing a reporter types and the easiest thing to
+    read with a rule, so it should not depend on the provider being up. A number is only taken
+    when a unit word follows it — which is what keeps "batch CC26045", "200 mg/5 mL" and
+    "25 July 2026" out — or when the assistant explicitly asked for the quantity and the
+    reporter answered with a single bare number.
+    """
+    match = _QUANTITY_WITH_UNIT_RE.search(message)
+    if match:
+        return _as_number(match.group(1)), _UNIT_BY_SPELLING[match.group(2).lower()]
+
+    if pending_field == "quantity_affected":
+        numbers = _BARE_NUMBER_RE.findall(message)
+        if len(numbers) == 1:
+            return float(numbers[0]), None
+
+    return None, None
+
+
 def _normalise_date_words(text: str) -> str:
     text = _ORDINAL_RE.sub(r"\1", text.lower())
     text = re.sub(r"[,]", " ", text)

@@ -5,6 +5,7 @@ import pytest
 from app.llm.json_utils import JsonParseError, parse_json_object
 from app.schemas.analysis import ExtractedComplaintFields, RiskAssessment
 from app.services.completeness import assess_completeness
+from app.services.intake_dialogue import interpret_quantity_answer
 from app.services.risk_rules import heuristic_risk, merge_with_floor
 
 # --- completeness ---------------------------------------------------------------------
@@ -178,3 +179,36 @@ def test_quantity_is_extracted_from_a_noisy_string() -> None:
     fields = ExtractedComplaintFields.model_validate({"quantity_affected": "about 12 capsules"})
 
     assert fields.quantity_affected == 12.0
+
+
+# --- deterministic quantity parsing ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "message, expected",
+    [
+        ("6 bottles not 5", (6.0, "bottles")),
+        ("6 bottles, not 5", (6.0, "bottles")),
+        ("six bottles", (6.0, "bottles")),
+        ("actually 12 vials were affected", (12.0, "vials")),
+        ("2 strips", (2.0, "blisters")),
+        ("1.5 kg", (1.5, "kg")),
+        # A number with no unit beside it is not a quantity — these are the values the rule
+        # must refuse, or it would overwrite the batch, the strength, or a date.
+        ("the batch is CC26045", (None, None)),
+        ("200 mg/5 mL", (None, None)),
+        ("25 July 2026", (None, None)),
+        ("no idea", (None, None)),
+    ],
+)
+def test_quantity_is_parsed_only_when_a_unit_follows_the_number(
+    message: str, expected: tuple[float | None, str | None]
+) -> None:
+    assert interpret_quantity_answer(message) == expected
+
+
+def test_a_bare_number_counts_only_when_the_quantity_was_asked_for() -> None:
+    assert interpret_quantity_answer("6") == (None, None)
+    assert interpret_quantity_answer("6", pending_field="quantity_affected") == (6.0, None)
+    # Two numbers is not an answer to "how many?" — leave it to the model.
+    assert interpret_quantity_answer("6 or 7", pending_field="quantity_affected") == (None, None)

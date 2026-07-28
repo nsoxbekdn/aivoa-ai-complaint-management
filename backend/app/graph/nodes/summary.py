@@ -52,7 +52,7 @@ def generate_summary(state: GraphState) -> dict:
         f"<complaint>\n{state.get('raw_text', '')}\n</complaint>\n\nReturn the summary JSON now."
     )
     try:
-        raw = complete_json(SUMMARY_SYSTEM, user_prompt, max_tokens=400)
+        raw = complete_json(SUMMARY_SYSTEM, user_prompt, max_tokens=900)
         summary = str(raw.get("summary", "")).strip()
     except LLMError as exc:
         logger.info("Summary generation failed: %s", exc)

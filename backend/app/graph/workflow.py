@@ -6,9 +6,9 @@
       → validate_extraction
             ├─ invalid & retries left → repair_extraction → validate_extraction
             └─ valid / out of retries → assess_completeness
-      → classify_risk
-      → generate_summary
-      → generate_recommendations
+      → classify_risk            ┐ QA analysis: skipped in reporter mode, where the
+      → generate_summary         │ intake screen shows neither and /finalize
+      → generate_recommendations ┘ regenerates both from the corrected form
       → assemble_result
       → END
 
@@ -46,8 +46,14 @@ from app.schemas.analysis import (
 from app.services.completeness import assess_completeness
 
 
-def build_graph():
-    """Wire the nodes together. Kept separate from `run_analysis` so tests can inspect it."""
+def build_graph(*, include_qa_analysis: bool = True):
+    """Wire the nodes together. Kept separate from `run_analysis` so tests can inspect it.
+
+    `include_qa_analysis=False` stops after the summary. Risk and CAPA recommendations belong
+    to the QA reviewer, not the person reporting the complaint — the intake screen never shows
+    them, and `/finalize` regenerates both from the corrected form when the complaint is
+    lodged. Skipping them there removes two LLM round-trips from the reporter's first reply.
+    """
     graph = StateGraph(GraphState)
 
     graph.add_node("prepare_input", prepare_input)
@@ -55,9 +61,7 @@ def build_graph():
     graph.add_node("validate_extraction", validate_extraction)
     graph.add_node("repair_extraction", repair_extraction)
     graph.add_node("assess_completeness", assess_completeness_node)
-    graph.add_node("classify_risk", classify_risk)
     graph.add_node("generate_summary", generate_summary)
-    graph.add_node("generate_recommendations", generate_recommendations)
     graph.add_node("assemble_result", assemble_result)
 
     graph.add_edge(START, "prepare_input")
@@ -72,19 +76,26 @@ def build_graph():
     )
     graph.add_edge("repair_extraction", "validate_extraction")
 
-    graph.add_edge("assess_completeness", "classify_risk")
-    graph.add_edge("classify_risk", "generate_summary")
-    graph.add_edge("generate_summary", "generate_recommendations")
-    graph.add_edge("generate_recommendations", "assemble_result")
+    if include_qa_analysis:
+        graph.add_node("classify_risk", classify_risk)
+        graph.add_node("generate_recommendations", generate_recommendations)
+        graph.add_edge("assess_completeness", "classify_risk")
+        graph.add_edge("classify_risk", "generate_summary")
+        graph.add_edge("generate_summary", "generate_recommendations")
+        graph.add_edge("generate_recommendations", "assemble_result")
+    else:
+        graph.add_edge("assess_completeness", "generate_summary")
+        graph.add_edge("generate_summary", "assemble_result")
+
     graph.add_edge("assemble_result", END)
 
     return graph.compile()
 
 
 @lru_cache
-def get_compiled_graph():
-    """Compile once per process — compilation is pure setup work."""
-    return build_graph()
+def get_compiled_graph(include_qa_analysis: bool = True):
+    """Compile once per process, per variant — compilation is pure setup work."""
+    return build_graph(include_qa_analysis=include_qa_analysis)
 
 
 def build_finalization_graph():
@@ -115,9 +126,10 @@ def run_analysis(
     input_type: str = "text",
     filename: str | None = None,
     warnings: list[str] | None = None,
+    include_qa_analysis: bool = True,
 ) -> ComplaintAnalysisResponse:
     """Run the workflow and map the final state onto the API response schema."""
-    final: GraphState = get_compiled_graph().invoke(
+    final: GraphState = get_compiled_graph(include_qa_analysis).invoke(
         initial_state(raw_text, input_type, filename, warnings or [])
     )
 

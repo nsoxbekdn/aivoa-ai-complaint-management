@@ -1,9 +1,10 @@
-import type { FormEvent } from 'react';
+import { useEffect, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 
 import { useAppDispatch, useAppSelector } from '../app/hooks';
 import {
   createComplaint,
+  clearFieldHighlight,
   clearIntake,
   dismissSaveError,
   setFormField,
@@ -37,7 +38,16 @@ export function ComplaintForm() {
     saving,
     saveError,
     savedComplaint,
+    highlightedFields,
   } = useAppSelector((state) => state.complaints);
+
+  // The flash is a notification, not a state: clear it so a later re-render, or coming back
+  // to this page, does not replay a change the reporter has already seen.
+  useEffect(() => {
+    if (highlightedFields.length === 0) return;
+    const timer = window.setTimeout(() => dispatch(clearFieldHighlight()), 2200);
+    return () => window.clearTimeout(timer);
+  }, [highlightedFields, dispatch]);
 
   const aiFieldCount = Object.entries(fieldSources).filter(
     ([field, source]) =>
@@ -57,6 +67,7 @@ export function ComplaintForm() {
     value: formData[field],
     error: validationErrors[field],
     aiFilled: fieldSources[field] === 'ai',
+    justChanged: highlightedFields.includes(field),
     disabled: saving,
     onChange: (value: string) => dispatch(setFormField({ field, value })),
   });

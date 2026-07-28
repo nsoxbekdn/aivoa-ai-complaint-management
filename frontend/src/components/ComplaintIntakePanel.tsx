@@ -4,6 +4,7 @@ import { useAppDispatch, useAppSelector } from '../app/hooks';
 import {
   analyzeComplaint,
   clearIntake,
+  clearIntakeFailure,
   continueIntakeChat,
   dismissAnalysisError,
   setPastedText,
@@ -33,6 +34,19 @@ const COMPLETENESS_LABEL_BY_FIELD: Record<string, string> = {
   complaint_details: 'complaint details',
 };
 
+/** Long waits feel broken when nothing moves. The stages are honest about what the backend
+ *  is doing at that point, so the text is information rather than decoration. */
+function progressLabel(analyzing: boolean, seconds: number): string {
+  if (analyzing) {
+    if (seconds < 3) return 'Reading the complaint';
+    if (seconds < 8) return 'Pulling out the facts';
+    return 'Still working — the AI service is slow right now';
+  }
+  if (seconds < 3) return 'Checking the information';
+  if (seconds < 8) return 'Updating the form';
+  return 'Still working — the AI service is slow right now';
+}
+
 function PaperclipIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -55,6 +69,14 @@ function SendIcon() {
   );
 }
 
+function StopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 /** Reporter-facing chat. Internal risk, investigation and CAPA remain on the lodged record. */
 export function ComplaintIntakePanel() {
   const dispatch = useAppDispatch();
@@ -65,9 +87,14 @@ export function ComplaintIntakePanel() {
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** The last attachment sent. Redux cannot hold a File, so a failed turn's attachment is
+   *  restored from here rather than from state. */
+  const lastFileRef = useRef<File | null>(null);
+  const inFlightRef = useRef<{ abort: (reason?: string) => void } | null>(null);
 
   const pending = analyzing || intakeChat.pending;
   const canSend = Boolean(message.trim() || file) && !pending;
@@ -99,6 +126,28 @@ export function ComplaintIntakePanel() {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 132)}px`;
   }, [message]);
 
+  useEffect(() => {
+    if (!pending) {
+      setElapsed(0);
+      return;
+    }
+    const timer = window.setInterval(() => setElapsed((seconds) => seconds + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [pending]);
+
+  // A turn that never reached the assistant gives its message back rather than losing it.
+  useEffect(() => {
+    const failed = intakeChat.failed;
+    if (!failed) return;
+    setMessage((current) => current || failed.text);
+    const attempted = lastFileRef.current;
+    if (attempted && attempted.name === failed.attachmentName) {
+      setFile(attempted);
+      dispatch(setUploadedFile({ name: attempted.name, size: attempted.size }));
+    }
+    dispatch(clearIntakeFailure());
+  }, [intakeChat.failed, dispatch]);
+
   const chooseFile = (candidate: File | undefined) => {
     if (!candidate) return;
     const lower = candidate.name.toLowerCase();
@@ -123,18 +172,22 @@ export function ComplaintIntakePanel() {
   const handleSend = () => {
     if (!canSend) return;
     const text = message.trim();
+    const attachment = file;
     setLocalError(null);
+    lastFileRef.current = attachment;
     if (!analysis && !formHasReporterFacts) {
       dispatch(setPastedText(text));
-      dispatch(analyzeComplaint({ text: text || undefined, file: file ?? undefined }));
+      inFlightRef.current = dispatch(
+        analyzeComplaint({ text: text || undefined, file: attachment ?? undefined }),
+      );
     } else {
-      dispatch(
+      inFlightRef.current = dispatch(
         continueIntakeChat({
           message: text,
           currentFields: formData,
           history: intakeChat.messages,
           dialogueState: intakeChat.dialogueState,
-          file: file ?? undefined,
+          file: attachment ?? undefined,
         }),
       );
     }
@@ -146,8 +199,13 @@ export function ComplaintIntakePanel() {
     setFile(null);
     setMessage('');
     setLocalError(null);
+    lastFileRef.current = null;
     dispatch(clearIntake());
   };
+
+  const errorMessage = analysisError ?? localError ?? intakeChat.error;
+  // Only the assistant's own failures are worth retrying; a rejected file is not.
+  const canRetry = Boolean((analysisError ?? intakeChat.error) && message.trim());
 
   return (
     <div className="card card--ai intake-chat">
@@ -163,10 +221,11 @@ export function ComplaintIntakePanel() {
       </div>
 
       <div className="card__body intake-chat__body">
-        {(analysisError || localError || intakeChat.error) && (
+        {errorMessage && (
           <ErrorAlert
             title="The assistant could not continue"
-            message={analysisError ?? localError ?? intakeChat.error ?? ''}
+            message={errorMessage}
+            onRetry={canRetry ? handleSend : undefined}
             onDismiss={() => {
               setLocalError(null);
               dispatch(dismissAnalysisError());
@@ -205,8 +264,8 @@ export function ComplaintIntakePanel() {
                 <span />
                 <span />
                 <span />
-                <span className="sr-only">
-                  {analyzing ? 'Reading the complaint' : 'Checking the information'}
+                <span className="intake-chat__typing-label">
+                  {progressLabel(analyzing, elapsed)}
                 </span>
               </div>
             </div>
@@ -292,15 +351,27 @@ export function ComplaintIntakePanel() {
                 }
               }}
             />
-            <button
-              type="button"
-              className="intake-chat__send-button"
-              aria-label="Send message"
-              disabled={!canSend}
-              onClick={handleSend}
-            >
-              {pending ? <span className="spinner" aria-hidden="true" /> : <SendIcon />}
-            </button>
+            {pending ? (
+              <button
+                type="button"
+                className="intake-chat__send-button intake-chat__send-button--stop"
+                aria-label="Stop and get my message back"
+                title="Stop"
+                onClick={() => inFlightRef.current?.abort()}
+              >
+                <StopIcon />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="intake-chat__send-button"
+                aria-label="Send message"
+                disabled={!canSend}
+                onClick={handleSend}
+              >
+                <SendIcon />
+              </button>
+            )}
           </div>
           <div className="intake-chat__composer-hint">
             <span>PDF, PNG or JPG · scanned files supported</span>

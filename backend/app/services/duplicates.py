@@ -19,10 +19,14 @@ from app.schemas.analysis import DuplicateCandidate, ExtractedComplaintFields
 CANDIDATE_LIMIT = 50
 REPORT_THRESHOLD = 0.45  # below this the "match" is noise
 _NON_WORD = re.compile(r"[^a-z0-9 ]+")
+# SequenceMatcher is O(n*m). Against 50 stored complaints an uncapped incoming text turns
+# this into minutes of blocking CPU (a 1 MB paste measured at 91s), so both sides are
+# compared on their opening section only — which is where a duplicate declares itself.
+_COMPARE_CHARS = 4_000
 
 
 def _normalise(text: str | None) -> str:
-    return _NON_WORD.sub(" ", (text or "").lower()).strip()
+    return _NON_WORD.sub(" ", (text or "")[:_COMPARE_CHARS].lower()).strip()
 
 
 def find_possible_duplicates(

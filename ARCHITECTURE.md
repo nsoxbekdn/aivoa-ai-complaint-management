@@ -64,20 +64,26 @@ Conversational intake, step by step:
 6. `services/intake_dialogue.py` preserves useful partial values, recognises unavailable answers,
    selects one pending field, tracks retries, and chooses an explicit action such as accepted,
    corrected, partial, invalid, ambiguous, answer-question, unavailable, or ready.
-7. The reducer applies only the response's explicit `changed_fields`, stores the returned
+7. `services/intake_reply.py` phrases that decision. The deterministic composer always builds a
+   correct sentence *and* a plain-language fact sheet; a small model is then asked to say those
+   same facts naturally, so a greeting or an apology gets a human answer instead of a template.
+   It may only choose words: any reply stating a number that appears in neither the fact sheet
+   nor the reporter's message is discarded, as is every reply when the provider is unavailable,
+   and the deterministic sentence is sent instead.
+8. The reducer applies only the response's explicit `changed_fields`, stores the returned
    dialogue state, and appends the user and assistant messages to `intakeChat.messages`. It does
    not replay the complete request snapshot, so a form edit made while chat is pending cannot be
    erased. A short answer such as `2025` can therefore complete an earlier `25 June`, while a
    natural correction updates the same editable form.
-8. Risk, root-cause, investigation, duplicate, and CAPA output remain out of the intake UI.
+9. Risk, root-cause, investigation, duplicate, and CAPA output remain out of the intake UI.
    When minimum factual completeness is reached, the **Lodge complaint** action becomes
    available.
-9. `buildCreatePayload` converts blanks to `null` and sends the final form, transcript, original
+10. `buildCreatePayload` converts blanks to `null` and sends the final form, transcript, original
    input, attachment transcriptions, and warnings to `/api/complaints/finalize`. A second,
    extraction-free LangGraph path regenerates completeness, risk, summary, investigation,
    CAPA, and duplicates from those authoritative form values. Only then is one consistent row
    committed. The saved detail page is the internal QA workspace.
-10. Rejected thunks store a human sentence produced by `toErrorMessage`; `ErrorAlert` renders it
+11. Rejected thunks store a human sentence produced by `toErrorMessage`; `ErrorAlert` renders it
    in the relevant surface.
 
 ```
@@ -273,7 +279,9 @@ The compiled graph is cached with `@lru_cache` — compilation is pure setup.
 
 ## 8. Groq integration
 
-`app/llm/groq_client.py` is the only module that imports the Groq SDK.
+`app/llm/groq_client.py` is the only module that imports the Groq SDK. The backend pins the
+current stable Python SDK (`groq==1.6.0`), uses its synchronous typed response objects and
+`APIError` hierarchy, and explicitly preserves the previous two-retry client policy.
 
 - `complete_json(system, user, max_tokens, schema=...)` — the workhorse. Output shaping is
   tiered, strongest first:
@@ -308,8 +316,12 @@ The compiled graph is cached with `@lru_cache` — compilation is pure setup.
   likewise repaired by the graph.
 - Temperature comes from config and defaults to `0.1` — extraction and classification must be
   reproducible.
-- Every failure becomes `LLMError` with a message safe to return to the client;
+- Generation limits use the SDK's current `max_completion_tokens` parameter. Qwen Vision uses
+  the first-class `reasoning_effort="none"` parameter rather than an untyped `extra_body`.
+- Provider failures become `LLMError` with a message safe to return to the client;
   `LLMNotConfiguredError` distinguishes "no key" from "provider down".
+- A typed response with no choices or empty assistant content becomes `LLMOutputError`; it is
+  never accepted as a successful blank result.
 - Logs record the exception **type** and the model name, never the key or the prompt.
 
 `prompts.py` holds all prompt text. Every system prompt is assembled from three constants:
@@ -350,6 +362,7 @@ to the model, then gives up and continues with a blank field set plus a warning.
 | Groq down / rate-limited | Fallback **model**, then per-node degradation: rule-based risk, factual summary, generic GMP steps, all with warnings |
 | Model rejects `json_schema` | Downgrade to `json_object`, then prompt-only; the working tier is cached per model |
 | Model returns prose instead of JSON | `LLMOutputError` (no model switch) → the repair node re-asks with the bad reply attached → then a warning |
+| Model returns no choice / empty content | `LLMOutputError`; no empty success is passed to a graph node or OCR parser |
 | Model returns JSON that fails Pydantic | Same repair node, with the validation error attached |
 | Model invents a batch number | Grounding guard drops it and warns |
 | Model under-rates a critical complaint | `merge_with_floor` raises it and records why in the rationale |

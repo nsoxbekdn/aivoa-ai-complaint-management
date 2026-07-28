@@ -358,6 +358,34 @@ a:hover {
   border-color: var(--danger);
 }
 
+/* The assistant must never change the form silently: a value it just wrote pulses once so
+   the reporter's eye is drawn to what moved while they were reading the chat. */
+.field--changed input,
+.field--changed select,
+.field--changed textarea {
+  animation: field-flash 2.2s ease-out 1;
+}
+
+@keyframes field-flash {
+  0%, 55% {
+    border-color: var(--ai);
+    box-shadow: 0 0 0 3px var(--ai-soft);
+  }
+  100% {
+    border-color: var(--ai-border);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .field--changed input,
+  .field--changed select,
+  .field--changed textarea {
+    animation: none;
+    border-color: var(--ai);
+  }
+}
+
 .field__hint {
   font-size: 11px;
   color: var(--text-muted);
@@ -833,6 +861,24 @@ a:hover {
   opacity: 0.7;
 }
 
+/* An error the user can act on beats an error they can only read. */
+.alert__retry {
+  margin-top: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.alert__retry:hover {
+  background: rgba(255, 255, 255, 0.9);
+}
+
 /* --- save confirmation dialog ------------------------------------------------------ */
 
 .save-dialog {
@@ -1195,7 +1241,7 @@ table.data-table {
   gap: 4px;
 }
 
-.intake-chat__typing > span:not(.sr-only) {
+.intake-chat__typing > span:not(.sr-only):not(.intake-chat__typing-label) {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -1214,6 +1260,19 @@ table.data-table {
 @keyframes chat-bounce {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
   30% { transform: translateY(-4px); opacity: 1; }
+}
+
+/* Names the stage the request is actually at. A 6-second wait with no words reads as a
+   hang; the same wait with "Pulling out the facts" reads as work. */
+.intake-chat__typing {
+  min-width: 58px;
+}
+
+.intake-chat__typing-label {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .intake-chat__status {
@@ -1292,6 +1351,19 @@ table.data-table {
   color: #fff;
   background: linear-gradient(135deg, var(--brand), var(--ai));
   box-shadow: 0 4px 10px rgba(79, 70, 229, 0.22);
+}
+
+/* A slow turn must always be escapable — the same button, now an exit. */
+.intake-chat__send-button--stop {
+  background: var(--surface);
+  color: var(--danger);
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
+}
+
+.intake-chat__send-button--stop:hover {
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }
 
 .intake-chat__send-button:disabled,

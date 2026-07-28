@@ -102,7 +102,9 @@ def _matches(text: str, patterns: dict[str, str]) -> list[str]:
 
 
 _NEGATION_PREFIX = re.compile(
-    r"(?:\bno\b|\bnot\b|\bwithout\b|\bnever\b|\bnone\b|\bdidn['â€™]?t\b|\bdid not\b)"
+    # ’ is the curly apostrophe; spelled as an escape so the class survives any
+    # re-encoding of this file.
+    r"(?:\bno\b|\bnot\b|\bwithout\b|\bnever\b|\bnone\b|\bdidn['’]?t\b|\bdid not\b)"
     r"(?:\s+\w+){0,4}\s*$",
     re.IGNORECASE,
 )

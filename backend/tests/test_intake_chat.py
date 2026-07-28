@@ -2,6 +2,8 @@
 
 from fastapi.testclient import TestClient
 
+from app.llm.groq_client import LLMError
+
 
 COMPLETE_BASE = {
     "complaint_source": "customer_email",
@@ -53,6 +55,156 @@ def test_intake_chat_applies_natural_language_correction(
     assert set(body["changed_fields"]) == {"batch_lot_number", "quantity_affected"}
     assert body["ready_to_lodge"] is True
     assert "Got it" in body["assistant_message"]
+
+
+def test_a_value_bearing_message_is_never_marked_unavailable(
+    client: TestClient, monkeypatch
+) -> None:
+    """Observed live: asked for the reporter name, the reporter typed "6 bottles" and the
+    model labelled the turn `unavailable`. Marking a field unavailable is sticky, so that
+    silently stopped the assistant ever asking for the name again."""
+
+    def fake_turn(*args, **kwargs):
+        return {"intent": "unavailable", "field_updates": {}, "clear_fields": []}
+
+    monkeypatch.setattr("app.api.routes.complaints.complete_json", fake_turn)
+    response = client.post(
+        "/api/complaints/intake/chat",
+        json={
+            "message": "6 bottles",
+            "current_fields": {**COMPLETE_BASE, "batch_lot_number": None},
+            "history": [],
+            "dialogue_state": {"pending_field": "batch_lot_number"},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dialogue_state"]["unavailable_fields"] == []
+    assert body["action"] != "acknowledge_unavailable"
+
+
+def test_a_genuine_cannot_answer_is_still_honoured(client: TestClient, monkeypatch) -> None:
+    def fake_turn(*args, **kwargs):
+        return {"intent": "unavailable", "field_updates": {}, "clear_fields": []}
+
+    monkeypatch.setattr("app.api.routes.complaints.complete_json", fake_turn)
+    response = client.post(
+        "/api/complaints/intake/chat",
+        json={
+            "message": "the carton doesn't show it anywhere",
+            "current_fields": {**COMPLETE_BASE, "batch_lot_number": None},
+            "history": [],
+            "dialogue_state": {"pending_field": "batch_lot_number"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["dialogue_state"]["unavailable_fields"] == ["batch_lot_number"]
+
+
+def test_repeating_a_value_already_on_the_form_is_acknowledged(
+    client: TestClient, monkeypatch
+) -> None:
+    """Re-sending a correction that already landed used to read as "I couldn't connect that
+    answer to a form field", which makes a working assistant look broken."""
+
+    def fake_turn(*args, **kwargs):
+        return {"intent": "correct_information", "field_updates": {"quantity_affected": 6}}
+
+    monkeypatch.setattr("app.api.routes.complaints.complete_json", fake_turn)
+    response = client.post(
+        "/api/complaints/intake/chat",
+        json={
+            "message": "6 bottles not 5",
+            "current_fields": {**COMPLETE_BASE, "quantity_affected": 6},
+            "history": [],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["changed_fields"] == []
+    assert body["action"] == "confirm_understanding"
+    assert "already matches the form" in body["assistant_message"]
+
+
+def test_provider_failure_keeps_the_conversation_alive(client: TestClient, monkeypatch) -> None:
+    """A rate limit or a non-JSON reply used to 503 the turn: the reporter lost their message
+    and got "could not understand that response", which blames them for a provider outage.
+    The turn must still answer, keep the form untouched, and say what actually happened."""
+
+    def fake_turn(*args, **kwargs):
+        raise LLMError("AI provider unavailable (rate limited).")
+
+    monkeypatch.setattr("app.api.routes.complaints.complete_json", fake_turn)
+    response = client.post(
+        "/api/complaints/intake/chat",
+        json={
+            "message": "the caps looked loose on the outer ones",
+            "current_fields": {**COMPLETE_BASE, "quantity_affected": 5},
+            "history": [],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["updated_fields"]["quantity_affected"] == 5, "nothing may be invented"
+    assert body["changed_fields"] == []
+    assert "AI service did not respond" in body["assistant_message"]
+
+
+def test_provider_failure_still_applies_a_quantity_correction(
+    client: TestClient, monkeypatch
+) -> None:
+    """The original reported bug, with the provider down: "6 bottles not 5" is unambiguous to
+    a rule, so it must not depend on the LLM answering."""
+
+    def fake_turn(*args, **kwargs):
+        raise LLMError("AI provider unavailable (rate limited).")
+
+    monkeypatch.setattr("app.api.routes.complaints.complete_json", fake_turn)
+    response = client.post(
+        "/api/complaints/intake/chat",
+        json={
+            "message": "6 bottles not 5",
+            "current_fields": {
+                **COMPLETE_BASE,
+                "quantity_affected": 5,
+                "quantity_unit": "bottles",
+            },
+            "history": [],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["updated_fields"]["quantity_affected"] == 6
+    assert body["changed_fields"] == ["quantity_affected"]
+    assert "corrected" in body["assistant_message"]
+
+
+def test_provider_failure_still_parses_a_date_answer(client: TestClient, monkeypatch) -> None:
+    """Date handling is rule-based, so it must survive the LLM being down."""
+
+    def fake_turn(*args, **kwargs):
+        raise LLMError("AI provider unavailable (rate limited).")
+
+    monkeypatch.setattr("app.api.routes.complaints.complete_json", fake_turn)
+    response = client.post(
+        "/api/complaints/intake/chat",
+        json={
+            "message": "12 June 2026",
+            "current_fields": {**COMPLETE_BASE, "expiry_date": None},
+            "history": [],
+            "dialogue_state": {"pending_field": "expiry_date"},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["updated_fields"]["expiry_date"] == "2026-06-12"
+    assert body["changed_fields"] == ["expiry_date"]
 
 
 def test_intake_chat_explains_a_term_without_changing_fields(
@@ -112,7 +264,7 @@ def test_invalid_human_date_gets_a_specific_explanation(
     response = client.post(
         "/api/complaints/intake/chat",
         json={
-            "message": "manufactured on the 35th of June bro",
+            "message": "manufactured on the 35th of June",
             "current_fields": _date_question_base(),
             "history": [],
         },
@@ -285,3 +437,80 @@ def test_form_question_is_answered_without_treating_it_as_complaint_data(
     assert body["changed_fields"] == []
     assert "trace the production records" in body["assistant_message"]
     assert "What manufacturing date" in body["assistant_message"]
+
+
+def test_casual_remark_is_acknowledged_instead_of_being_treated_as_a_failed_answer(
+    client: TestClient, monkeypatch
+) -> None:
+    """A greeting or an apology used to fall through to "I couldn't connect that answer",
+    which is what made the assistant feel like a form rather than a conversation."""
+
+    def smalltalk_turn(*args, **kwargs):
+        return {**_empty_turn(), "intent": "unrelated"}
+
+    monkeypatch.setattr("app.api.routes.complaints.complete_json", smalltalk_turn)
+    response = client.post(
+        "/api/complaints/intake/chat",
+        json={
+            "message": "sorry, this is my first time reporting one of these",
+            "current_fields": _date_question_base(),
+            "history": [],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["action"] == "acknowledge_smalltalk"
+    assert body["changed_fields"] == []
+    assert "couldn’t confidently connect" not in body["assistant_message"]
+    # The point of acknowledging it is that the conversation still moves forward.
+    assert body["dialogue_state"]["pending_field"] == "manufacturing_date"
+
+
+def test_the_reply_is_phrased_naturally_when_the_model_is_available(
+    client: TestClient, monkeypatch
+) -> None:
+    def correction_turn(*args, **kwargs):
+        return {**_empty_turn(), "field_updates": {"manufacturing_date": "2026-03-02"}}
+
+    natural = "Thanks, I've noted that down. What expiry date is printed on the carton?"
+    monkeypatch.setattr("app.api.routes.complaints.complete_json", correction_turn)
+    monkeypatch.setattr(
+        "app.services.intake_reply.complete_text", lambda *a, **k: f"**{natural}**"
+    )
+    response = client.post(
+        "/api/complaints/intake/chat",
+        json={
+            "message": "manufactured on 2 March 2026",
+            "current_fields": _date_question_base(),
+            "history": [],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    # The phrasing model chose the words; the deterministic layer still owns the record.
+    assert body["assistant_message"] == natural
+    assert body["updated_fields"]["manufacturing_date"] == "2026-03-02"
+
+
+def test_a_reply_that_invents_a_number_is_thrown_away(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.api.routes.complaints.complete_json", _empty_turn)
+    monkeypatch.setattr(
+        "app.services.intake_reply.complete_text",
+        lambda *a, **k: "Noted — batch CC99999 is recorded. What manufacturing date is printed?",
+    )
+    response = client.post(
+        "/api/complaints/intake/chat",
+        json={
+            "message": "not sure what else you need",
+            "current_fields": _date_question_base(),
+            "history": [],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "CC99999" not in body["assistant_message"]

@@ -3,6 +3,8 @@ interface ErrorAlertProps {
   message: string;
   variant?: 'error' | 'warning' | 'success' | 'info';
   onDismiss?: () => void;
+  /** Offer only when the failed action can genuinely be repeated as-is. */
+  onRetry?: () => void;
 }
 
 const ICONS: Record<string, string> = {
@@ -13,13 +15,24 @@ const ICONS: Record<string, string> = {
 };
 
 /** One component for every message the user must read: errors, warnings, confirmations. */
-export function ErrorAlert({ title, message, variant = 'error', onDismiss }: ErrorAlertProps) {
+export function ErrorAlert({
+  title,
+  message,
+  variant = 'error',
+  onDismiss,
+  onRetry,
+}: ErrorAlertProps) {
   return (
     <div className={`alert alert--${variant}`} role={variant === 'error' ? 'alert' : 'status'}>
       <span aria-hidden="true">{ICONS[variant]}</span>
       <div className="alert__content">
         {title && <div className="alert__title">{title}</div>}
         <div>{message}</div>
+        {onRetry && (
+          <button type="button" className="alert__retry" onClick={onRetry}>
+            Try again
+          </button>
+        )}
       </div>
       {onDismiss && (
         <button type="button" className="alert__close" onClick={onDismiss} aria-label="Dismiss">

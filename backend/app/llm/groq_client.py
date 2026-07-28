@@ -17,12 +17,12 @@ the model gets the shape wrong; it is never the thing that guarantees it.
 
 from __future__ import annotations
 
-import logging
 import base64
+import logging
 from functools import lru_cache
 from typing import Any
 
-from groq import Groq
+from groq import APIError, Groq
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -51,8 +51,14 @@ class LLMOutputError(LLMError):
         self.raw_output = raw_output
 
 
-# model id -> the best response mode that model has actually accepted this process.
-_MODE_CACHE: dict[str, str] = {}
+# (model id, whether a schema was sent) -> the best response mode that combination has
+# actually been accepted with this process.
+#
+# The schema flag is part of the key on purpose. A schema-less call can only ever reach
+# json_object or text, so caching its outcome under the bare model id would tell later
+# *schema* calls that this model no longer accepts structured output — silently demoting
+# every extraction and intake turn for the rest of the process.
+_MODE_CACHE: dict[tuple[str, bool], str] = {}
 _MODE_ORDER = ("json_schema", "json_object", "text")
 
 
@@ -63,7 +69,16 @@ def _client() -> Groq:
         raise LLMNotConfiguredError(
             "GROQ_API_KEY is not set. Add it to backend/.env to enable AI analysis."
         )
-    return Groq(api_key=settings.groq_api_key, timeout=settings.groq_timeout_seconds)
+    return Groq(
+        api_key=settings.groq_api_key,
+        timeout=settings.groq_timeout_seconds,
+        # Pinned rather than left to the SDK default (two), so the primary/fallback-model
+        # policy does not change under us in a future SDK release. Four because a burst of
+        # concurrent analyses on a free-tier key answers 429 for a second or two; the SDK's
+        # exponential backoff rides that out, whereas giving up early surfaces to the user
+        # as "the AI is unavailable" on a request that would have succeeded.
+        max_retries=4,
+    )
 
 
 def _inline_refs(node: Any, defs: dict) -> Any:
@@ -161,12 +176,40 @@ def _rejects_response_format(exc: Exception) -> bool:
     return "badrequest" in type(exc).__name__.lower() or getattr(exc, "status_code", None) == 400
 
 
+def _reasoning_kwargs() -> dict[str, str]:
+    """Cap how much of the token budget a reasoning model may spend thinking.
+
+    Without this, gpt-oss spends most of ``max_completion_tokens`` on its private chain of
+    thought and returns a truncated or empty answer — which surfaces as "the AI returned
+    output that could not be read as JSON", not as the budget problem it actually is.
+    """
+    effort = get_settings().groq_reasoning_effort.strip()
+    return {"reasoning_effort": effort} if effort else {}
+
+
 def _response_format(mode: str, schema: type[BaseModel] | None) -> dict | None:
     if mode == "json_schema" and schema is not None:
         return strict_json_schema(schema)
     if mode == "json_object":
         return {"type": "json_object"}
     return None
+
+
+def _response_content(response: Any, model: str) -> str:
+    """Read one non-empty assistant message from an SDK response.
+
+    Groq 1.x returns typed Pydantic response objects, but a provider-side empty ``choices``
+    array or ``content=None`` is still possible. Treat that as unusable model output rather
+    than leaking ``IndexError``/``AttributeError`` or returning an empty successful result.
+    """
+    choices = getattr(response, "choices", None)
+    if not choices:
+        raise LLMOutputError(f"{model} returned no completion choices.")
+    message = getattr(choices[0], "message", None)
+    content = getattr(message, "content", None)
+    if not isinstance(content, str) or not content.strip():
+        raise LLMOutputError(f"{model} returned an empty completion.")
+    return content
 
 
 def _call(
@@ -178,7 +221,8 @@ def _call(
         {"role": "user", "content": user_prompt},
     ]
 
-    start = _MODE_ORDER.index(_MODE_CACHE.get(model, "json_schema" if schema else "json_object"))
+    cache_key = (model, schema is not None)
+    start = _MODE_ORDER.index(_MODE_CACHE.get(cache_key, "json_schema" if schema else "json_object"))
     modes = [mode for mode in _MODE_ORDER[start:] if mode != "json_schema" or schema is not None]
 
     last_exc: Exception | None = None
@@ -187,7 +231,8 @@ def _call(
             "model": model,
             "messages": messages,
             "temperature": settings.groq_temperature,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
+            **_reasoning_kwargs(),
         }
         response_format = _response_format(mode, schema)
         if response_format is not None:
@@ -195,15 +240,15 @@ def _call(
 
         try:
             response = _client().chat.completions.create(**kwargs)
-        except Exception as exc:  # noqa: BLE001 - mode support varies per model
+        except APIError as exc:
             if not _rejects_response_format(exc):
                 raise
             logger.info("Model %s rejected %s mode; trying a weaker response mode.", model, mode)
             last_exc = exc
             continue
 
-        _MODE_CACHE[model] = mode
-        return response.choices[0].message.content or ""
+        _MODE_CACHE[cache_key] = mode
+        return _response_content(response, model)
 
     raise last_exc if last_exc else LLMError(f"{model}: no usable response mode.")
 
@@ -237,7 +282,9 @@ def complete_json(
             raw = _call(model, system_prompt, user_prompt, max_tokens, schema)
         except LLMNotConfiguredError:
             raise
-        except Exception as exc:  # noqa: BLE001 - provider errors vary by failure mode
+        except LLMOutputError:
+            raise
+        except APIError as exc:
             # str(exc) can carry a request id and status, never the key (the SDK redacts it).
             last_error = f"{model}: {type(exc).__name__}"
             logger.warning("Groq call failed on model %s: %s", model, type(exc).__name__)
@@ -254,10 +301,16 @@ def complete_json(
     raise LLMError(f"AI provider unavailable ({last_error}).")
 
 
-def complete_text(system_prompt: str, user_prompt: str, *, max_tokens: int = 500) -> str:
-    """Plain-text completion, used by the grounded complaint chat."""
+def complete_text(
+    system_prompt: str, user_prompt: str, *, max_tokens: int = 500, model: str | None = None
+) -> str:
+    """Plain-text completion, used by the grounded complaint chat.
+
+    `model` pins the call to one model instead of walking the usual primary-then-fallback list.
+    Reply phrasing uses it so a cosmetic call cannot spend the main model's token budget.
+    """
     settings = get_settings()
-    for model in [settings.groq_model, settings.groq_fallback_model]:
+    for model in [model] if model else [settings.groq_model, settings.groq_fallback_model]:
         if not model:
             continue
         try:
@@ -268,12 +321,15 @@ def complete_text(system_prompt: str, user_prompt: str, *, max_tokens: int = 500
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=settings.groq_temperature,
-                max_tokens=max_tokens,
+                max_completion_tokens=max_tokens,
+                **_reasoning_kwargs(),
             )
-            return (response.choices[0].message.content or "").strip()
+            return _response_content(response, model).strip()
         except LLMNotConfiguredError:
             raise
-        except Exception:  # noqa: BLE001
+        except LLMOutputError:
+            raise
+        except APIError:
             logger.warning("Groq text call failed on model %s.", model)
     raise LLMError("AI provider unavailable.")
 
@@ -308,9 +364,9 @@ def complete_vision_json(
         "model": settings.groq_vision_model,
         "messages": [{"role": "user", "content": content}],
         "temperature": 0,
-        "max_tokens": max_tokens,
+        "max_completion_tokens": max_tokens,
         # Qwen otherwise spends the output budget on a visible <think> trace.
-        "extra_body": {"reasoning_effort": "none"},
+        "reasoning_effort": "none",
     }
 
     last_error: Exception | None = None
@@ -320,13 +376,15 @@ def complete_vision_json(
             kwargs["response_format"] = response_format
         try:
             response = _client().chat.completions.create(**kwargs)
-            raw = response.choices[0].message.content or ""
+            raw = _response_content(response, settings.groq_vision_model)
             return parse_json_object(raw)
         except JsonParseError as exc:
             raise LLMOutputError(
                 "Groq Vision returned OCR output that was not valid JSON.", raw_output=raw
             ) from exc
-        except Exception as exc:  # noqa: BLE001 - hosted model error types vary
+        except LLMOutputError:
+            raise
+        except APIError as exc:
             last_error = exc
             if response_format is not None and _rejects_response_format(exc):
                 logger.info("Vision model rejected JSON mode; retrying without response_format.")

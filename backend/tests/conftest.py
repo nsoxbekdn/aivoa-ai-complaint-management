@@ -19,7 +19,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.database import Base, SessionLocal, engine  # noqa: E402
+from app.llm.groq_client import LLMError  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services import intake_reply  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +30,31 @@ def clean_database() -> Iterator[None]:
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(autouse=True)
+def no_reply_phrasing() -> Iterator[None]:
+    """Silence the reply-phrasing model unless a test asks for it.
+
+    Phrasing is the one call whose output is meant to vary, so assertions about *what the
+    assistant decided* must be made against the deterministic sentence underneath it. Failing
+    the call here is also what `phrase_reply` sees when the provider is down, so every intake
+    test doubles as a check that the fallback path stays correct.
+
+    Patched by hand rather than with `monkeypatch`: an autouse fixture in conftest that requests
+    `monkeypatch` builds it before every module-level fixture, which reverses the teardown order
+    the LLM-client tests rely on.
+    """
+
+    def unavailable(*args: object, **kwargs: object) -> str:
+        raise LLMError("phrasing disabled in tests")
+
+    original = intake_reply.complete_text
+    intake_reply.complete_text = unavailable
+    try:
+        yield
+    finally:
+        intake_reply.complete_text = original
 
 
 @pytest.fixture

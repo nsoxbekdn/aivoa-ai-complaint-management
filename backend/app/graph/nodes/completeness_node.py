@@ -34,7 +34,7 @@ def assess_completeness_node(state: GraphState) -> dict:
         "Return the follow-up questions JSON now."
     )
     try:
-        raw = complete_json(COMPLETENESS_SYSTEM, user_prompt, max_tokens=400)
+        raw = complete_json(COMPLETENESS_SYSTEM, user_prompt, max_tokens=900)
         questions = [str(q).strip() for q in raw.get("follow_up_questions", []) if str(q).strip()]
         if questions:
             assessment = assessment.model_copy(update={"follow_up_questions": questions[:6]})

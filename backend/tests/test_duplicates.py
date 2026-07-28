@@ -1,6 +1,13 @@
 from fastapi.testclient import TestClient
 
+from app.services.duplicates import _COMPARE_CHARS, _normalise
 from tests.test_analyze import SAMPLE_TEXT
+
+
+def test_comparison_text_is_capped() -> None:
+    """SequenceMatcher is O(n*m): a 1 MB complaint against 50 stored rows measured at 91
+    seconds of blocking CPU before this cap existed."""
+    assert len(_normalise("a" * 1_000_000)) == _COMPARE_CHARS
 
 
 def test_analyze_flags_an_existing_complaint_for_the_same_batch(

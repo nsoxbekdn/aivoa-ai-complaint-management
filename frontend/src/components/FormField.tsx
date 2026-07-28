@@ -19,6 +19,9 @@ interface FormFieldProps {
   placeholder?: string;
   /** True when the value was written by the AI and has not been edited yet. */
   aiFilled?: boolean;
+  /** True for a couple of seconds after the assistant wrote this value, so the form does
+   *  not change silently while the reporter is looking at the chat. */
+  justChanged?: boolean;
   fullWidth?: boolean;
   rows?: number;
   children?: ReactNode;
@@ -37,6 +40,7 @@ export function FormField({
   hint,
   placeholder,
   aiFilled = false,
+  justChanged = false,
   fullWidth = false,
   rows = 5,
 }: FormFieldProps) {
@@ -44,6 +48,7 @@ export function FormField({
     'field',
     fullWidth ? 'field--full' : '',
     aiFilled ? 'field--ai' : '',
+    justChanged ? 'field--changed' : '',
     error ? 'field--invalid' : '',
   ]
     .filter(Boolean)

@@ -42,11 +42,18 @@ export function toErrorMessage(error: unknown): string {
 export async function analyzeComplaintRequest(input: {
   text?: string;
   file?: File;
+  signal?: AbortSignal;
 }): Promise<ComplaintAnalysisResponse> {
   const form = new FormData();
   if (input.file) form.append('file', input.file);
   if (input.text) form.append('complaint_text', input.text);
-  const { data } = await http.post<ComplaintAnalysisResponse>('/complaints/analyze', form);
+  const { data } = await http.post<ComplaintAnalysisResponse>('/complaints/analyze', form, {
+    // Risk and CAPA belong to the QA reviewer and are regenerated when the complaint is
+    // lodged. Asking for them here would cost the reporter two extra LLM calls of waiting
+    // for output this screen never shows.
+    params: { include_qa_analysis: false },
+    signal: input.signal,
+  });
   return data;
 }
 
@@ -61,6 +68,7 @@ export async function continueIntakeChatRequest(input: {
   history: { role: 'user' | 'assistant'; text: string }[];
   dialogueState: IntakeDialogueState;
   file?: File;
+  signal?: AbortSignal;
 }): Promise<IntakeChatResponse> {
   const current_fields = Object.fromEntries(
     Object.entries(input.currentFields).map(([key, value]) => [
@@ -78,15 +86,20 @@ export async function continueIntakeChatRequest(input: {
     const { data } = await http.post<IntakeChatResponse>(
       '/complaints/intake/chat/attachment',
       form,
+      { signal: input.signal },
     );
     return data;
   }
-  const { data } = await http.post<IntakeChatResponse>('/complaints/intake/chat', {
-    message: input.message,
-    current_fields,
-    history: input.history.slice(-20),
-    dialogue_state: input.dialogueState,
-  });
+  const { data } = await http.post<IntakeChatResponse>(
+    '/complaints/intake/chat',
+    {
+      message: input.message,
+      current_fields,
+      history: input.history.slice(-20),
+      dialogue_state: input.dialogueState,
+    },
+    { signal: input.signal },
+  );
   return data;
 }
 

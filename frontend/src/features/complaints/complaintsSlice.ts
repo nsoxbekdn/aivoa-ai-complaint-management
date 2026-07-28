@@ -55,7 +55,11 @@ export interface ComplaintsState {
     error: string | null;
     readyToLodge: boolean;
     dialogueState: IntakeDialogueState;
+    /** A turn that never reached the assistant, handed back for the composer to restore. */
+    failed: { text: string; attachmentName?: string } | null;
   };
+  /** Fields the assistant just wrote, flashed briefly so the change is not silent. */
+  highlightedFields: ComplaintFormField[];
 
   saving: boolean;
   saveError: string | null;
@@ -96,7 +100,10 @@ const EMPTY_DIALOGUE_STATE: IntakeDialogueState = {
   last_action: null,
 };
 
-const initialState: ComplaintsState = {
+/** Exported so the store can layer a persisted subset on top of it. `preloadedState`
+ *  replaces a slice wholesale rather than merging, so anything not spread in comes back
+ *  undefined and the first component to read it crashes. */
+export const initialComplaintsState: ComplaintsState = {
   formData: { ...EMPTY_FORM },
   fieldSources: {},
   validationErrors: {},
@@ -112,7 +119,9 @@ const initialState: ComplaintsState = {
     error: null,
     readyToLodge: false,
     dialogueState: { ...EMPTY_DIALOGUE_STATE },
+    failed: null,
   },
+  highlightedFields: [],
   saving: false,
   saveError: null,
   savedComplaint: null,
@@ -121,15 +130,25 @@ const initialState: ComplaintsState = {
   chat: { messages: [], pending: false, error: null },
 };
 
+/** A turn that failed or was cancelled never reached the assistant. Take the message back
+ *  out of the transcript and hand it to the composer, so it is neither lost nor left sitting
+ *  in the conversation looking like something the assistant ignored. */
+function takeBackLastUserMessage(state: ComplaintsState): void {
+  const last = state.intakeChat.messages.at(-1);
+  if (last?.role !== 'user') return;
+  state.intakeChat.messages.pop();
+  state.intakeChat.failed = { text: last.text, attachmentName: last.attachmentName };
+}
+
 // --- thunks ---------------------------------------------------------------------------
 
 export const analyzeComplaint = createAsyncThunk<
   ComplaintAnalysisResponse,
   { text?: string; file?: File },
   { rejectValue: string }
->('complaints/analyze', async (input, { rejectWithValue }) => {
+>('complaints/analyze', async (input, { rejectWithValue, signal }) => {
   try {
-    return await analyzeComplaintRequest(input);
+    return await analyzeComplaintRequest({ ...input, signal });
   } catch (error) {
     return rejectWithValue(toErrorMessage(error));
   }
@@ -157,9 +176,9 @@ export const continueIntakeChat = createAsyncThunk<
     file?: File;
   },
   { rejectValue: string }
->('complaints/continueIntakeChat', async (input, { rejectWithValue }) => {
+>('complaints/continueIntakeChat', async (input, { rejectWithValue, signal }) => {
   try {
-    return await continueIntakeChatRequest(input);
+    return await continueIntakeChatRequest({ ...input, signal });
   } catch (error) {
     return rejectWithValue(toErrorMessage(error));
   }
@@ -220,7 +239,7 @@ export const askAboutComplaint = createAsyncThunk<
 
 const complaintsSlice = createSlice({
   name: 'complaints',
-  initialState,
+  initialState: initialComplaintsState,
   reducers: {
     setFormField(
       state,
@@ -264,16 +283,26 @@ const complaintsSlice = createSlice({
       state.upload = { fileName: null, fileSize: null };
       state.saveError = null;
       state.savedComplaint = null;
+      state.highlightedFields = [];
       state.intakeChat = {
         messages: [{ ...INTAKE_WELCOME }],
         pending: false,
         error: null,
         readyToLodge: false,
         dialogueState: { ...EMPTY_DIALOGUE_STATE },
+        failed: null,
       };
     },
     dismissAnalysisError(state) {
       state.analysisError = null;
+      state.intakeChat.error = null;
+    },
+    /** The composer has taken the text back; stop offering to restore it. */
+    clearIntakeFailure(state) {
+      state.intakeChat.failed = null;
+    },
+    clearFieldHighlight(state) {
+      state.highlightedFields = [];
     },
     dismissSaveError(state) {
       state.saveError = null;
@@ -297,6 +326,7 @@ const complaintsSlice = createSlice({
         state.analysisStartedAt = Date.now();
         state.savedComplaint = null;
         state.intakeChat.error = null;
+        state.intakeChat.failed = null;
         state.intakeChat.messages.push({
           role: 'user',
           text: action.meta.arg.text || (action.meta.arg.file ? 'Please read this attachment.' : ''),
@@ -308,6 +338,7 @@ const complaintsSlice = createSlice({
         state.analysis = action.payload;
         // This is the automatic form population the whole product is built around.
         const { form, sources } = formFromAnalysis(action.payload);
+        const filled: ComplaintFormField[] = [];
         // Never erase facts the reporter edited while analysis was running. AI values
         // populate untouched fields, while human-owned values remain authoritative.
         (Object.keys(form) as ComplaintFormField[]).forEach((field) => {
@@ -315,8 +346,10 @@ const complaintsSlice = createSlice({
           if (form[field].trim()) {
             state.formData[field] = form[field];
             state.fieldSources[field] = sources[field];
+            filled.push(field);
           }
         });
+        state.highlightedFields = filled;
         state.validationErrors = {};
         const reporterMissing = [
           ...action.payload.completeness.missing_critical_fields,
@@ -348,12 +381,15 @@ const complaintsSlice = createSlice({
       })
       .addCase(analyzeComplaint.rejected, (state, action) => {
         state.analyzing = false;
-        state.analysisError = action.payload ?? 'Analysis failed.';
+        takeBackLastUserMessage(state);
+        // An abort is the user's own decision, not a failure to report back to them.
+        state.analysisError = action.meta.aborted ? null : action.payload ?? 'Analysis failed.';
       })
 
       .addCase(continueIntakeChat.pending, (state, action) => {
         state.intakeChat.pending = true;
         state.intakeChat.error = null;
+        state.intakeChat.failed = null;
         state.intakeChat.messages.push({
           role: 'user',
           text: action.meta.arg.message || 'Please read this attachment.',
@@ -415,13 +451,16 @@ const complaintsSlice = createSlice({
         }
         // Apply only facts actually learned or corrected in this turn. Re-copying the
         // whole request snapshot would overwrite any form edits made while chat was pending.
+        const touched: ComplaintFormField[] = [];
         action.payload.changed_fields.forEach((changedField) => {
           if (!(changedField in state.formData)) return;
           const field = changedField as ComplaintFormField;
           const value = action.payload.updated_fields[field];
           state.formData[field] = value === null || value === undefined ? '' : String(value);
           state.fieldSources[field] = 'ai';
+          touched.push(field);
         });
+        state.highlightedFields = touched;
         if (state.analysis) {
           state.analysis.extracted_fields = action.payload.updated_fields;
           state.analysis.completeness = action.payload.completeness;
@@ -434,8 +473,10 @@ const complaintsSlice = createSlice({
       })
       .addCase(continueIntakeChat.rejected, (state, action) => {
         state.intakeChat.pending = false;
-        state.intakeChat.error =
-          action.payload ?? 'The intake assistant could not understand that response.';
+        takeBackLastUserMessage(state);
+        state.intakeChat.error = action.meta.aborted
+          ? null
+          : action.payload ?? 'The assistant could not be reached. Your message was not sent.';
       })
 
       .addCase(createComplaint.pending, (state) => {
@@ -517,6 +558,8 @@ export const {
   validateBeforeSave,
   resetForm,
   clearIntake,
+  clearIntakeFailure,
+  clearFieldHighlight,
   dismissAnalysisError,
   dismissSaveError,
   setListSearch,

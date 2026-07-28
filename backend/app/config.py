@@ -31,12 +31,22 @@ class Settings(BaseSettings):
     # Vision is used only for OCR/document understanding. Keeping it separate makes hosted
     # model changes an environment edit rather than a code change.
     groq_vision_model: str = "qwen/qwen3.6-27b"
+    # Wording the assistant's reply is the one job in this system that needs no reasoning and
+    # no accuracy — every fact is handed to it. Pointing it at the small model keeps the large
+    # model's daily token budget for extraction and classification, and it answers in ~0.5s.
+    groq_reply_model: str = "openai/gpt-oss-20b"
     groq_timeout_seconds: float = 45.0
     # Low temperature: extraction and classification must be reproducible, not creative.
     groq_temperature: float = 0.1
+    # gpt-oss is a reasoning model: its private chain of thought is billed against
+    # max_completion_tokens, so at the default effort a 900-token budget was measured
+    # spending 831 tokens thinking and returning a truncated (sometimes empty) answer.
+    # "low" cuts that to ~260 and leaves room for the JSON. Groq accepts only
+    # low | medium | high here; blank the value for a model that has no reasoning mode.
+    groq_reasoning_effort: str = "low"
 
     # --- API ------------------------------------------------------------------
-    frontend_origin: str = "http://localhost:5173"
+    frontend_origin: str = "http://localhost:5173,http://127.0.0.1:5173"
     max_upload_size_mb: int = 5
     max_ocr_pages: int = 3
     max_vision_payload_mb: int = 18

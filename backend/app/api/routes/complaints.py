@@ -1,3 +1,4 @@
+
 """Complaint endpoints: AI analysis (no write) and CRUD (writes)."""
 
 from __future__ import annotations
@@ -46,11 +47,14 @@ from app.graph.nodes.validate import _ground_fields
 from app.services.intake_dialogue import (
     DATE_FIELDS,
     interpret_date_answer,
+    interpret_quantity_answer,
     is_unavailable_answer,
     issue_reply,
+    may_be_unavailable_answer,
     next_intake_question,
     question_for,
 )
+from app.services.intake_reply import phrase_reply
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/complaints", tags=["complaints"])
@@ -180,15 +184,26 @@ def _compose_intake_reply(
     feedback: list[IntakeFieldCandidate],
     next_question: str | None,
     unavailable_field: str | None = None,
-) -> str:
-    """Turn a validated dialogue decision into a short, truthful reporter-facing reply."""
+    reconfirmed_fields: list[str] | None = None,
+    degraded: bool = False,
+) -> tuple[str, dict[str, str]]:
+    """Turn a validated dialogue decision into a short, truthful reporter-facing reply.
+
+    Returns the sentence *and* the same decision as a plain-language fact sheet. The sentence is
+    always correct but always sounds the same; the fact sheet is what `phrase_reply` re-words
+    into something conversational, and it exists here so that both are built from one set of
+    labels and formatted values.
+    """
 
     parts: list[str] = []
+    facts: dict[str, str] = {"SITUATION": action.replace("_", " ")}
     if interpretation.clarification_answer:
         parts.append(interpretation.clarification_answer.strip())
+        facts["ANSWER TO THEIR QUESTION"] = interpretation.clarification_answer.strip()
 
     if feedback and not changed_fields:
         parts.append(issue_reply(feedback[0]))
+        facts["PROBLEM WITH THEIR ANSWER"] = issue_reply(feedback[0])
     elif changed_fields:
         updates = ", ".join(
             f"{_FIELD_LABELS.get(name, name.replace('_', ' '))} as "
@@ -207,36 +222,66 @@ def _compose_intake_reply(
                 for name in corrected
             )
             parts.append(f"No problem—I corrected {old_values}. I’ve recorded {updates}.")
+            facts["CORRECTED"] = old_values
         else:
             parts.append(f"Got it—I recorded {updates}.")
         parts.append(f"This is what I understand so far: {_intake_understanding(fields)}")
+        facts["RECORDED"] = updates
+        facts["THE COMPLAINT SO FAR"] = _intake_understanding(fields)
         if feedback:
             parts.append(issue_reply(feedback[0]))
+            facts["PROBLEM WITH ANOTHER VALUE"] = issue_reply(feedback[0])
     elif unavailable_field:
         label = _FIELD_LABELS.get(unavailable_field, unavailable_field.replace("_", " "))
         parts.append(
             f"That’s okay—I’ve marked the {label} as unavailable and won’t keep asking for it."
         )
+        facts["MARKED UNAVAILABLE, DO NOT ASK AGAIN"] = label
+    elif reconfirmed_fields:
+        already = ", ".join(
+            f"{_FIELD_LABELS.get(name, name.replace('_', ' '))} is "
+            f"{_field_value_for_message(getattr(fields, name))}"
+            for name in reconfirmed_fields
+        )
+        parts.append(f"That already matches the form—{already}.")
+        facts["ALREADY MATCHES THE FORM"] = already
+    elif action == "acknowledge_smalltalk":
+        # Nothing to record and nothing wrong — the reporter simply said something human.
+        parts.append("Thanks for letting me know.")
+        facts["NOTHING TO RECORD"] = (
+            "The reporter made a casual or off-topic remark. No form value changed."
+        )
     elif interpretation.confirmation:
         parts.append("Thanks for confirming that I understood the complaint correctly.")
+        facts["THEY CONFIRMED"] = "The reporter confirmed the complaint is understood correctly."
     elif not interpretation.clarification_answer and action == "clarify_ambiguous_value":
         parts.append(
-            "I couldn’t confidently connect that answer to a form field, so I haven’t changed "
-            "the complaint yet."
+            # Being specific about *why* matters: "I could not understand you" sends the
+            # reporter off rewording a message that was perfectly clear.
+            "The AI service did not respond just now, so I have not changed the complaint. "
+            "Please send that again in a moment, or type it straight into the form."
+            if degraded
+            else "I couldn’t confidently connect that answer to a form field, so I haven’t "
+            "changed the complaint yet."
+        )
+        facts["COULD NOT USE THEIR ANSWER"] = (
+            "Nothing was changed, because that message could not be connected to a form field."
         )
 
     if next_question and not feedback:
-        if changed_fields or unavailable_field:
+        if changed_fields or unavailable_field or reconfirmed_fields:
             parts.append(f"Next question: {next_question}")
         else:
             parts.append(next_question)
     elif action == "ready_to_lodge":
-        parts.append(
+        ready = (
             "I now have the important information needed to lodge the complaint. "
             "Please review the form and correct anything that does not look right."
         )
+        parts.append(ready)
+        facts["STATUS"] = ready
 
-    return " ".join(parts)
+    return " ".join(parts), facts
 
 
 async def _read_input(
@@ -303,9 +348,16 @@ async def analyze_complaint(
     request: Request,
     complaint_text: Annotated[str | None, Form()] = None,
     file: Annotated[UploadFile | None, File()] = None,
+    include_qa_analysis: bool = True,
     db: Session = Depends(get_db),
 ) -> ComplaintAnalysisResponse:
-    """Run the LangGraph workflow over a complaint. Nothing is written to the database."""
+    """Run the LangGraph workflow over a complaint. Nothing is written to the database.
+
+    `include_qa_analysis=false` is what the reporter's intake screen sends: it skips the risk
+    classification and CAPA recommendations, which that screen never displays and `/finalize`
+    regenerates anyway, and returns the reply two LLM round-trips sooner. The default stays
+    true so the endpoint still answers with the complete analysis on its own.
+    """
     settings = get_settings()
     if not settings.llm_configured:
         raise HTTPException(
@@ -327,7 +379,12 @@ async def analyze_complaint(
 
     # The graph is synchronous (the Groq SDK is sync) — keep the event loop free.
     result = await run_in_threadpool(
-        run_analysis, text, input_type=input_type, filename=filename, warnings=warnings
+        run_analysis,
+        text,
+        input_type=input_type,
+        filename=filename,
+        warnings=warnings,
+        include_qa_analysis=include_qa_analysis,
     )
     result.duplicate_candidates = find_possible_duplicates(db, result.extracted_fields, text)
     result.source_documents = documents
@@ -381,21 +438,26 @@ async def _interpret_intake_turn(
         f"<complaint>{grounding_text or payload.message}</complaint>\n\n"
         "Return the intake-turn JSON now."
     )
+    degraded = False
     try:
         raw = await run_in_threadpool(
             complete_json,
             INTAKE_CHAT_SYSTEM,
             user_prompt,
-            max_tokens=900,
+            # Budget covers the model's reasoning tokens as well as the JSON it returns.
+            max_tokens=1500,
             schema=IntakeChatInterpretation,
         )
         interpretation = IntakeChatInterpretation.model_validate(raw)
     except (LLMError, ValueError) as exc:
-        logger.warning("Conversational intake turn failed: %s", type(exc).__name__)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The intake assistant could not understand that response. Please try rephrasing it.",
-        ) from exc
+        # A provider hiccup (rate limit, timeout, a reply that was not JSON) is not the
+        # reporter's fault and must not cost them their message. Continue the turn on the
+        # deterministic path below — date parsing, "not available" handling, completeness
+        # scoring and the next question are all rule-based — with an empty interpretation so
+        # that nothing is invented from an answer no model actually read.
+        logger.warning("Conversational intake turn degraded: %s", type(exc).__name__)
+        interpretation = IntakeChatInterpretation()
+        degraded = True
 
     grounded_updates, warnings = _ground_fields(
         interpretation.field_updates, grounding_text or payload.message
@@ -460,14 +522,36 @@ async def _interpret_intake_turn(
             elif date_feedback.status == "invalid":
                 dialogue.partial_fields.pop(field, None)
 
+    # Quantity gets the same deterministic second opinion as dates, and for the same reason:
+    # "6 bottles not 5" is unambiguous to a rule, it is the single most common correction a
+    # reporter makes, and it should not stop working because the provider is busy.
+    if grounded_updates.quantity_affected is None:
+        quantity, unit = interpret_quantity_answer(
+            payload.message, pending_field=dialogue.pending_field
+        )
+        if quantity is not None:
+            update: dict[str, object] = {"quantity_affected": quantity}
+            if unit and grounded_updates.quantity_unit is None:
+                update["quantity_unit"] = unit
+            grounded_updates = grounded_updates.model_copy(update=update)
+            feedback_by_field.pop("quantity_affected", None)
+
     previous_values = dict(current)
     changed_fields: list[str] = []
 
+    # A value that matches what is already on the form is not a failure to understand — the
+    # reporter usually repeated themselves. Saying so beats "I couldn't connect that answer".
+    reconfirmed_fields: list[str] = []
+
     for name in _INTAKE_FACT_FIELDS:
         value = getattr(grounded_updates, name)
-        if value is not None and current.get(name) != value:
+        if value is None:
+            continue
+        if current.get(name) != value:
             current[name] = value
             changed_fields.append(name)
+        elif current.get(name) is not None:
+            reconfirmed_fields.append(name)
 
     for name in interpretation.clear_fields:
         if name in _INTAKE_FACT_FIELDS and current.get(name) is not None:
@@ -479,7 +563,10 @@ async def _interpret_intake_turn(
         dialogue.pending_field
         and not changed_fields
         and (
-            interpretation.intent == "unavailable"
+            (
+                interpretation.intent == "unavailable"
+                and may_be_unavailable_answer(payload.message)
+            )
             or is_unavailable_answer(payload.message)
         )
     ):
@@ -527,10 +614,17 @@ async def _interpret_intake_turn(
             )
         elif unavailable_field:
             action = "acknowledge_unavailable"
+        elif reconfirmed_fields:
+            action = "confirm_understanding"
         elif interpretation.clarification_answer:
             action = "answer_question"
         elif interpretation.confirmation:
             action = "confirm_understanding"
+        elif interpretation.intent == "unrelated" and not degraded:
+            # A greeting, an apology, a thank-you, or frustration. Nothing to record and nothing
+            # to complain about — treating it as a failed answer is what made the assistant feel
+            # robotic. The next question below still keeps the conversation moving.
+            action = "acknowledge_smalltalk"
         elif next_field:
             action = "clarify_ambiguous_value"
             dialogue.retry_counts[next_field] = dialogue.retry_counts.get(next_field, 0) + 1
@@ -553,7 +647,7 @@ async def _interpret_intake_turn(
     dialogue.pending_field = next_field
     dialogue.last_action = action
 
-    assistant_message = _compose_intake_reply(
+    assistant_message, facts = _compose_intake_reply(
         interpretation,
         updated_fields,
         changed_fields,
@@ -562,6 +656,8 @@ async def _interpret_intake_turn(
         feedback,
         next_question,
         unavailable_field,
+        reconfirmed_fields,
+        degraded,
     )
     if (
         completeness.is_complete
@@ -569,9 +665,24 @@ async def _interpret_intake_turn(
         and not feedback
         and action != "ready_to_lodge"
     ):
-        assistant_message += (
-            " I now have the important information needed to lodge the complaint. "
+        ready = (
+            "I now have the important information needed to lodge the complaint. "
             "Please review the form and correct anything that does not look right."
+        )
+        assistant_message += f" {ready}"
+        facts["STATUS"] = ready
+
+    # The turn is fully decided by this point. One more model call re-words that decision so the
+    # assistant sounds like a person instead of a template — and it can only choose words: the
+    # facts it is given are the only ones it may state, and `phrase_reply` falls back to the
+    # deterministic sentence above whenever the provider is down or the wording drifts.
+    if not degraded:
+        assistant_message = await run_in_threadpool(
+            phrase_reply,
+            payload.message,
+            facts,
+            next_question,
+            assistant_message,
         )
 
     return IntakeChatResponse(
@@ -813,7 +924,7 @@ async def chat_about_complaint(
         f"QUESTION: {payload.question}"
     )
     try:
-        answer = await run_in_threadpool(complete_text, CHAT_SYSTEM, user_prompt, max_tokens=400)
+        answer = await run_in_threadpool(complete_text, CHAT_SYSTEM, user_prompt, max_tokens=900)
     except LLMError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 

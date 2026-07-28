@@ -37,7 +37,7 @@ def classify_risk(state: GraphState) -> dict:
         "Return the risk assessment JSON now."
     )
     try:
-        raw = complete_json(RISK_SYSTEM, user_prompt, max_tokens=600, schema=RiskAssessment)
+        raw = complete_json(RISK_SYSTEM, user_prompt, max_tokens=1000, schema=RiskAssessment)
         model_view = RiskAssessment.model_validate(raw)
     except (LLMError, ValidationError) as exc:
         logger.warning("Risk classification fell back to rules: %s", type(exc).__name__)

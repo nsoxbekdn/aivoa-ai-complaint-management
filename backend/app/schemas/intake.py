@@ -21,6 +21,7 @@ IntakeAction = Literal[
     "clarify_ambiguous_value",
     "answer_question",
     "acknowledge_unavailable",
+    "acknowledge_smalltalk",
     "confirm_understanding",
     "ready_to_lodge",
 ]

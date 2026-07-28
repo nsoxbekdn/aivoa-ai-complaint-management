@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
+from tests.conftest import fake_complete_json
 
 SAMPLE_TEXT = (
     "From: quality@meridianpharmacy.example\n"
@@ -92,3 +93,47 @@ def test_analyze_does_not_save_anything(client: TestClient, mock_llm: None) -> N
     client.post("/api/complaints/analyze", data={"complaint_text": SAMPLE_TEXT})
 
     assert client.get("/api/complaints").json()["total"] == 0
+
+
+def test_reporter_mode_skips_the_qa_only_nodes(client: TestClient, monkeypatch) -> None:
+    """The intake screen shows neither risk nor CAPA, and /finalize regenerates both from the
+    corrected form. Asking for them here would cost the reporter two LLM round-trips of
+    waiting for output nobody reads."""
+    seen: list[str] = []
+
+    def counting_llm(system_prompt: str, user_prompt: str, **kwargs):
+        seen.append(system_prompt)
+        return fake_complete_json(system_prompt, user_prompt, **kwargs)
+
+    for module in (
+        "app.graph.nodes.extract",
+        "app.graph.nodes.completeness_node",
+        "app.graph.nodes.risk",
+        "app.graph.nodes.summary",
+        "app.graph.nodes.recommendations",
+    ):
+        monkeypatch.setattr(f"{module}.complete_json", counting_llm)
+
+    response = client.post(
+        "/api/complaints/analyze",
+        data={"complaint_text": SAMPLE_TEXT},
+        params={"include_qa_analysis": False},
+    )
+
+    assert response.status_code == 200
+    assert not any("risk assessor" in prompt for prompt in seen)
+    assert not any("investigator" in prompt for prompt in seen)
+    # The reporter still gets everything their screen actually renders.
+    body = response.json()
+    assert body["extracted_fields"]["batch_lot_number"] == "AMX-24118"
+    assert body["completeness"]["score"] > 0
+    assert body["summary"]
+
+
+def test_the_default_analysis_still_includes_risk_and_capa(
+    client: TestClient, mock_llm: None
+) -> None:
+    body = client.post("/api/complaints/analyze", data={"complaint_text": SAMPLE_TEXT}).json()
+
+    assert body["risk_assessment"]["risk_level"] != "unknown"
+    assert body["recommendations"]["possible_root_causes"]

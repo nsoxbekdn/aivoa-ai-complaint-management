@@ -27,8 +27,11 @@ GROQ_MODEL=openai/gpt-oss-120b
 GROQ_FALLBACK_MODEL=openai/gpt-oss-20b
 ```
 
-Nothing in the code hardcodes a model name — `app/config.py` reads both from the environment and
-`app/llm/groq_client.py` is the only consumer, so changing model is an `.env` edit and a restart.
+Model defaults are centralized in `app/config.py` and can be overridden through the environment;
+`app/llm/groq_client.py` is their only consumer, so changing a model is an `.env` edit and restart.
+The backend pins the current stable Groq Python SDK (`groq==1.6.0`). Calls use the SDK's typed
+Chat Completions responses, `APIError` hierarchy, `max_completion_tokens`, and the first-class
+Qwen `reasoning_effort="none"` parameter.
 
 Where a Pydantic model exists for the answer, its **strict JSON Schema is sent as
 `response_format`** (Groq structured output); if a model rejects that, the client falls back to
@@ -156,7 +159,7 @@ Full detail — request flow, node-by-node graph description, failure handling �
 | State | Redux Toolkit + `createAsyncThunk` | One place holds the form, the AI result and every loading/error flag; components stay dumb |
 | Routing | React Router 7 | Three screens: intake, list, detail |
 | HTTP | axios | One instance, one error-normalising helper |
-| Styling | Hand-written CSS + Inter | ~600 lines beats pulling in a component library for four screens |
+| Styling | Hand-written CSS + Inter | Purpose-built interface without a third-party component library |
 | Backend | FastAPI + Pydantic v2 | Validation and OpenAPI docs come from the same type definitions |
 | ORM | SQLAlchemy 2.0 (typed `Mapped[...]`) | Explicit models, no magic |
 | Migrations | Alembic | Reproducible schema, works on Postgres and SQLite |
@@ -259,7 +262,7 @@ python samples/make_sample_pdfs.py
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Primary model |
 | `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` | Tried if the primary model fails |
 | `GROQ_VISION_MODEL` | `qwen/qwen3.6-27b` | Vision model used for scanned-page and image OCR |
-| `FRONTEND_ORIGIN` | `http://localhost:5173` | CORS allow-list (comma-separated) |
+| `FRONTEND_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | CORS allow-list (comma-separated) |
 | `MAX_UPLOAD_SIZE_MB` | `5` | Upload limit |
 | `MAX_INPUT_CHARS` | `40000` | Longer input is truncated with a warning |
 | `MAX_EXTRACTION_RETRIES` | `1` | How many times the graph may run the repair node |
@@ -358,7 +361,7 @@ flowchart TD
   phrases such as "no patient injury" and otherwise prefers escalation over
   under-classification. It is still a heuristic and must be reviewed by QA.
 - **Duplicate detection is a hint** — SQL filter plus text similarity, never a verdict.
-- **No live streaming.** The eight workflow stages are confirmed from the response, not streamed.
+- **No live streaming.** Progress wording is client-side while each API request completes.
 - **English-language complaints** are what the prompts and heuristics were written for.
 
 ### What is stored is provenance, not a QMS audit trail
@@ -427,7 +430,7 @@ batches and contacts are fictional.
 
 ```bash
 cd backend
-python -m pytest              # 80 tests, no network access — the Groq client is mocked
+python -m pytest              # 116 tests, no network access — the Groq client is mocked
 ```
 
 ```bash
@@ -451,7 +454,10 @@ The Groq client has its own suite (`tests/test_llm_client.py`) covering the stri
 builder, the `json_schema → json_object → prompt-only` downgrade and its per-model cache, and
 the separation of failure kinds: a **provider** failure moves to the fallback model, while an
 **unusable reply** raises `LLMOutputError` and is handed to the graph's repair node instead of
-burning the fallback model on a shape problem.
+burning the fallback model on a shape problem. Its mocks use Groq 1.6's real typed
+`ChatCompletion`, `BadRequestError`, `RateLimitError`, and `APITimeoutError` classes; it also
+checks empty/no-choice responses, current request parameter names, client timeout/retries, and
+Qwen JSON-mode fallback.
 
 ---
 
